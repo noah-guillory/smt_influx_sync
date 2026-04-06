@@ -39,6 +39,7 @@ defmodule SmtInfluxSync.InfluxWriter do
       {:ok, table} ->
         pending = :dets.info(table, :size)
         if pending > 0, do: Logger.info("Loaded #{pending} pending write(s) from disk")
+        send(self(), :flush)
         schedule_flush()
         {:ok, %{table: table, healthy: true}}
 
