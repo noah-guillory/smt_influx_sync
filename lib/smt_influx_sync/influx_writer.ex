@@ -85,8 +85,8 @@ defmodule SmtInfluxSync.InfluxWriter do
 
   @impl true
   def handle_call({:write_batch, entries}, _from, state) do
-    state = do_write_batch(entries, state)
-    {:reply, :ok, state}
+    {state, ok} = do_write_batch(entries, state)
+    {:reply, if(ok, do: :ok, else: {:error, :write_failed}), state}
   end
 
   def handle_call(:pending_count, _from, state) do
@@ -134,12 +134,12 @@ defmodule SmtInfluxSync.InfluxWriter do
     if state.healthy and dets_empty?(state.table) do
       entries
       |> Enum.chunk_every(@batch_size)
-      |> Enum.reduce(state, fn chunk, state ->
+      |> Enum.reduce({state, true}, fn chunk, {state, ok} ->
         body = chunk |> Enum.map(&build_line_from_entry/1) |> Enum.join("\n")
 
         case do_write_lines(body) do
           :ok ->
-            state
+            {state, ok}
 
           {:error, reason} ->
             Logger.warning(
@@ -147,12 +147,12 @@ defmodule SmtInfluxSync.InfluxWriter do
             )
 
             Enum.each(chunk, &enqueue(state.table, &1))
-            %{state | healthy: false}
+            {%{state | healthy: false}, false}
         end
       end)
     else
       Enum.each(entries, &enqueue(state.table, &1))
-      state
+      {state, true}
     end
   end
 

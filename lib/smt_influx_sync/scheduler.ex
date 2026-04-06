@@ -127,7 +127,8 @@ defmodule SmtInfluxSync.Scheduler do
   end
 
   defp do_sync(state) do
-    Logger.info("[sync] Checking latest read for ESIID=#{state.esiid}")
+    started_at = System.monotonic_time(:millisecond)
+    Logger.info("[sync] Starting sync for ESIID=#{state.esiid}")
     ping_healthcheck(:start)
 
     odr_ok =
@@ -139,8 +140,7 @@ defmodule SmtInfluxSync.Scheduler do
               :error -> DateTime.to_unix(DateTime.utc_now())
             end
 
-          Logger.info("[sync] Got reading — value=#{reading.value} kWh, usage=#{reading.usage} kWh, read_date=#{reading.date}")
-          Logger.info("[sync] Writing to InfluxDB")
+          Logger.info("[sync] ODR complete — value=#{reading.value} kWh, usage=#{reading.usage} kWh, read_date=#{reading.date}")
 
           case InfluxWriter.write(
                  "electricity_usage",
@@ -149,28 +149,33 @@ defmodule SmtInfluxSync.Scheduler do
                  timestamp
                ) do
             :ok ->
-              Logger.info("[sync] Write accepted")
               true
 
             {:error, reason} ->
-              Logger.error("[sync] InfluxDB write error: #{inspect(reason)}")
+              Logger.error("[sync] ODR InfluxDB write error: #{inspect(reason)}")
               false
           end
 
         {:error, :rate_limited, _state} ->
-          Logger.warning("[sync] SMT rate limit hit — skipping this cycle")
+          Logger.warning("[sync] SMT rate limit hit — skipping ODR this cycle")
           false
 
         {:error, reason, _state} ->
-          Logger.error("[sync] Failed: #{inspect(reason)}")
+          Logger.error("[sync] ODR failed: #{inspect(reason)}")
           false
       end
 
     historical_ok = sync_historical(state)
 
-    if odr_ok and historical_ok,
-      do: ping_healthcheck(:success),
-      else: ping_healthcheck(:fail)
+    elapsed_ms = System.monotonic_time(:millisecond) - started_at
+
+    if odr_ok and historical_ok do
+      Logger.info("[sync] Sync completed successfully in #{elapsed_ms}ms")
+      ping_healthcheck(:success)
+    else
+      Logger.warning("[sync] Sync finished with errors in #{elapsed_ms}ms")
+      ping_healthcheck(:fail)
+    end
 
     state
   end
@@ -188,51 +193,69 @@ defmodule SmtInfluxSync.Scheduler do
 
   defp sync_interval(state, tags, end_date) do
     start_date = last_sync_start("interval", end_date)
-    Logger.info("[sync] Fetching interval data #{SMTClient.format_date(start_date)}–#{SMTClient.format_date(end_date)}")
+    Logger.info("[sync] [interval] Fetching #{SMTClient.format_date(start_date)}–#{SMTClient.format_date(end_date)}")
+
+    started_at = System.monotonic_time(:millisecond)
 
     case SMTClient.get_interval_data(state.token, state.esiid, start_date, end_date) do
       {:ok, records} ->
-        Logger.info("[sync] Got #{length(records)} interval records")
+        elapsed_ms = System.monotonic_time(:millisecond) - started_at
+        Logger.info("[sync] [interval] Fetched #{length(records)} records in #{elapsed_ms}ms, writing to InfluxDB")
         ok = write_records("electricity_interval", tags, records, &parse_interval_record/1)
-        if ok, do: save_last_sync("interval", end_date)
+        if ok do
+          save_last_sync("interval", end_date)
+          Logger.info("[sync] [interval] Done")
+        end
         ok
 
       {:error, reason} ->
-        Logger.error("[sync] Interval data fetch failed: #{inspect(reason)}")
+        Logger.error("[sync] [interval] Fetch failed: #{inspect(reason)}")
         false
     end
   end
 
   defp sync_daily(state, tags, end_date) do
     start_date = last_sync_start("daily", end_date)
-    Logger.info("[sync] Fetching daily data #{SMTClient.format_date(start_date)}–#{SMTClient.format_date(end_date)}")
+    Logger.info("[sync] [daily] Fetching #{SMTClient.format_date(start_date)}–#{SMTClient.format_date(end_date)}")
+
+    started_at = System.monotonic_time(:millisecond)
 
     case SMTClient.get_daily_data(state.token, state.esiid, start_date, end_date) do
       {:ok, records} ->
-        Logger.info("[sync] Got #{length(records)} daily records")
+        elapsed_ms = System.monotonic_time(:millisecond) - started_at
+        Logger.info("[sync] [daily] Fetched #{length(records)} records in #{elapsed_ms}ms, writing to InfluxDB")
         ok = write_records("electricity_daily", tags, records, &parse_daily_record/1)
-        if ok, do: save_last_sync("daily", end_date)
+        if ok do
+          save_last_sync("daily", end_date)
+          Logger.info("[sync] [daily] Done")
+        end
         ok
 
       {:error, reason} ->
-        Logger.error("[sync] Daily data fetch failed: #{inspect(reason)}")
+        Logger.error("[sync] [daily] Fetch failed: #{inspect(reason)}")
         false
     end
   end
 
   defp sync_monthly(state, tags, end_date) do
     start_date = last_sync_start("monthly", end_date)
-    Logger.info("[sync] Fetching monthly data #{SMTClient.format_date(start_date)}–#{SMTClient.format_date(end_date)}")
+    Logger.info("[sync] [monthly] Fetching #{SMTClient.format_date(start_date)}–#{SMTClient.format_date(end_date)}")
+
+    started_at = System.monotonic_time(:millisecond)
 
     case SMTClient.get_monthly_data(state.token, state.esiid, start_date, end_date) do
       {:ok, records} ->
-        Logger.info("[sync] Got #{length(records)} monthly records")
+        elapsed_ms = System.monotonic_time(:millisecond) - started_at
+        Logger.info("[sync] [monthly] Fetched #{length(records)} records in #{elapsed_ms}ms, writing to InfluxDB")
         ok = write_records("electricity_monthly", tags, records, &parse_monthly_record/1)
-        if ok, do: save_last_sync("monthly", end_date)
+        if ok do
+          save_last_sync("monthly", end_date)
+          Logger.info("[sync] [monthly] Done")
+        end
         ok
 
       {:error, reason} ->
-        Logger.error("[sync] Monthly data fetch failed: #{inspect(reason)}")
+        Logger.error("[sync] [monthly] Fetch failed: #{inspect(reason)}")
         false
     end
   end
@@ -277,8 +300,7 @@ defmodule SmtInfluxSync.Scheduler do
         end
       end)
 
-    InfluxWriter.write_batch(entries)
-    true
+    InfluxWriter.write_batch(entries) == :ok
   end
 
   # Interval: {date: "2026-04-05", starttime: " 12:00 am", consumption: 0.226, generation: 0}
