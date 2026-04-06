@@ -24,3 +24,5 @@ smt_influx_sync-*.tar
 
 # Environment variables (use .env.example as template)
 .env
+
+.elixir_ls
