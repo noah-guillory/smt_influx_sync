@@ -16,6 +16,8 @@ config :smt_influx_sync,
   influx_token: System.fetch_env!("INFLUX_TOKEN"),
   influx_org: System.fetch_env!("INFLUX_ORG"),
   influx_bucket: System.fetch_env!("INFLUX_BUCKET"),
+  # Optional: Healthchecks.io ping URL (e.g. https://hc-ping.com/<uuid>)
+  healthchecks_ping_url: System.get_env("HEALTHCHECKS_PING_URL"),
   # Default: 30 minutes (SMT rate limit: 2 reads/hour, 24/day)
   sync_interval_ms: String.to_integer(System.get_env("SYNC_INTERVAL_MS", "1800000")),
   poll_interval_ms: 5_000,

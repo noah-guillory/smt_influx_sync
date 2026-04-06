@@ -128,6 +128,7 @@ defmodule SmtInfluxSync.Scheduler do
 
   defp do_sync(state) do
     Logger.info("[sync] Checking latest read for ESIID=#{state.esiid}")
+    ping_healthcheck(:start)
 
     case request_and_read(state) do
       {:ok, reading, state} ->
@@ -148,20 +149,50 @@ defmodule SmtInfluxSync.Scheduler do
              ) do
           :ok ->
             Logger.info("[sync] Write accepted")
+            ping_healthcheck(:success)
 
           {:error, reason} ->
             Logger.error("[sync] InfluxDB write error: #{inspect(reason)}")
+            ping_healthcheck(:fail)
         end
 
         state
 
       {:error, :rate_limited, state} ->
         Logger.warning("[sync] SMT rate limit hit — skipping this cycle")
+        ping_healthcheck(:fail)
         state
 
       {:error, reason, state} ->
         Logger.error("[sync] Failed: #{inspect(reason)}")
+        ping_healthcheck(:fail)
         state
+    end
+  end
+
+  defp ping_healthcheck(signal) do
+    case Config.healthchecks_ping_url() do
+      nil ->
+        :ok
+
+      base_url ->
+        url =
+          case signal do
+            :start -> "#{base_url}/start"
+            :success -> base_url
+            :fail -> "#{base_url}/fail"
+          end
+
+        case Req.get(url, retry: false) do
+          {:ok, %{status: status}} when status in 200..299 ->
+            Logger.debug("[healthchecks] Pinged #{signal}")
+
+          {:ok, %{status: status}} ->
+            Logger.warning("[healthchecks] Ping #{signal} returned HTTP #{status}")
+
+          {:error, reason} ->
+            Logger.warning("[healthchecks] Ping #{signal} failed: #{inspect(reason)}")
+        end
     end
   end
 
