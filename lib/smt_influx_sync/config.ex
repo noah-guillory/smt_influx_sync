@@ -17,6 +17,9 @@ defmodule SmtInfluxSync.Config do
   def token_path,
     do: Application.get_env(@app, :token_path, "/data/smt_token")
 
+  def last_sync_path(source),
+    do: Application.get_env(@app, :data_dir, "/data") <> "/last_sync_#{source}"
+
   def healthchecks_ping_url, do: Application.get_env(@app, :healthchecks_ping_url)
 
   def sync_interval_ms, do: Application.get_env(@app, :sync_interval_ms, 1_800_000)

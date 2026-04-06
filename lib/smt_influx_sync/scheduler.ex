@@ -130,45 +130,288 @@ defmodule SmtInfluxSync.Scheduler do
     Logger.info("[sync] Checking latest read for ESIID=#{state.esiid}")
     ping_healthcheck(:start)
 
-    case request_and_read(state) do
-      {:ok, reading, state} ->
-        timestamp =
-          case SMTClient.parse_odr_date(reading.date) do
-            {:ok, unix} -> unix
-            :error -> DateTime.to_unix(DateTime.utc_now())
+    odr_ok =
+      case request_and_read(state) do
+        {:ok, reading, state} ->
+          timestamp =
+            case SMTClient.parse_odr_date(reading.date) do
+              {:ok, unix} -> unix
+              :error -> DateTime.to_unix(DateTime.utc_now())
+            end
+
+          Logger.info("[sync] Got reading — value=#{reading.value} kWh, usage=#{reading.usage} kWh, read_date=#{reading.date}")
+          Logger.info("[sync] Writing to InfluxDB")
+
+          case InfluxWriter.write(
+                 "electricity_usage",
+                 %{esiid: state.esiid, meter_number: state.meter_number, source: "odr"},
+                 %{value: reading.value, usage: reading.usage},
+                 timestamp
+               ) do
+            :ok ->
+              Logger.info("[sync] Write accepted")
+              true
+
+            {:error, reason} ->
+              Logger.error("[sync] InfluxDB write error: #{inspect(reason)}")
+              false
           end
 
-        Logger.info("[sync] Got reading — value=#{reading.value} kWh, usage=#{reading.usage} kWh, read_date=#{reading.date}")
-        Logger.info("[sync] Writing to InfluxDB")
+        {:error, :rate_limited, _state} ->
+          Logger.warning("[sync] SMT rate limit hit — skipping this cycle")
+          false
 
-        case InfluxWriter.write(
-               "electricity_usage",
-               %{esiid: state.esiid, meter_number: state.meter_number},
-               %{value: reading.value, usage: reading.usage},
-               timestamp
-             ) do
-          :ok ->
-            Logger.info("[sync] Write accepted")
-            ping_healthcheck(:success)
+        {:error, reason, _state} ->
+          Logger.error("[sync] Failed: #{inspect(reason)}")
+          false
+      end
 
-          {:error, reason} ->
-            Logger.error("[sync] InfluxDB write error: #{inspect(reason)}")
-            ping_healthcheck(:fail)
-        end
+    historical_ok = sync_historical(state)
 
-        state
+    if odr_ok and historical_ok,
+      do: ping_healthcheck(:success),
+      else: ping_healthcheck(:fail)
 
-      {:error, :rate_limited, state} ->
-        Logger.warning("[sync] SMT rate limit hit — skipping this cycle")
-        ping_healthcheck(:fail)
-        state
+    state
+  end
 
-      {:error, reason, state} ->
-        Logger.error("[sync] Failed: #{inspect(reason)}")
-        ping_healthcheck(:fail)
-        state
+  defp sync_historical(state) do
+    today = Date.utc_today()
+    base_tags = %{esiid: state.esiid, meter_number: state.meter_number}
+
+    interval_ok = sync_interval(state, Map.put(base_tags, :source, "interval"), today)
+    daily_ok = sync_daily(state, Map.put(base_tags, :source, "daily"), today)
+    monthly_ok = sync_monthly(state, Map.put(base_tags, :source, "monthly"), today)
+
+    interval_ok and daily_ok and monthly_ok
+  end
+
+  defp sync_interval(state, tags, end_date) do
+    start_date = last_sync_start("interval", end_date)
+    Logger.info("[sync] Fetching interval data #{SMTClient.format_date(start_date)}–#{SMTClient.format_date(end_date)}")
+
+    case SMTClient.get_interval_data(state.token, state.esiid, start_date, end_date) do
+      {:ok, records} ->
+        Logger.info("[sync] Got #{length(records)} interval records")
+        ok = write_records("electricity_interval", tags, records, &parse_interval_record/1)
+        if ok, do: save_last_sync("interval", end_date)
+        ok
+
+      {:error, reason} ->
+        Logger.error("[sync] Interval data fetch failed: #{inspect(reason)}")
+        false
     end
   end
+
+  defp sync_daily(state, tags, end_date) do
+    start_date = last_sync_start("daily", end_date)
+    Logger.info("[sync] Fetching daily data #{SMTClient.format_date(start_date)}–#{SMTClient.format_date(end_date)}")
+
+    case SMTClient.get_daily_data(state.token, state.esiid, start_date, end_date) do
+      {:ok, records} ->
+        Logger.info("[sync] Got #{length(records)} daily records")
+        ok = write_records("electricity_daily", tags, records, &parse_daily_record/1)
+        if ok, do: save_last_sync("daily", end_date)
+        ok
+
+      {:error, reason} ->
+        Logger.error("[sync] Daily data fetch failed: #{inspect(reason)}")
+        false
+    end
+  end
+
+  defp sync_monthly(state, tags, end_date) do
+    start_date = last_sync_start("monthly", end_date)
+    Logger.info("[sync] Fetching monthly data #{SMTClient.format_date(start_date)}–#{SMTClient.format_date(end_date)}")
+
+    case SMTClient.get_monthly_data(state.token, state.esiid, start_date, end_date) do
+      {:ok, records} ->
+        Logger.info("[sync] Got #{length(records)} monthly records")
+        ok = write_records("electricity_monthly", tags, records, &parse_monthly_record/1)
+        if ok, do: save_last_sync("monthly", end_date)
+        ok
+
+      {:error, reason} ->
+        Logger.error("[sync] Monthly data fetch failed: #{inspect(reason)}")
+        false
+    end
+  end
+
+  # Returns the start date for a sync window.
+  # On first run (no saved date): 365 days ago.
+  # On subsequent runs: the day after the last successful sync, capped at 365 days ago.
+  # We overlap by 1 day so partially-available data from the previous sync end gets a retry.
+  defp last_sync_start(source, today) do
+    floor = Date.add(today, -365)
+
+    case File.read(Config.last_sync_path(source)) do
+      {:ok, contents} ->
+        case Date.from_iso8601(String.trim(contents)) do
+          {:ok, last_date} ->
+            candidate = Date.add(last_date, -1)
+            if Date.compare(candidate, floor) == :lt, do: floor, else: candidate
+          _ -> floor
+        end
+
+      {:error, _} ->
+        floor
+    end
+  end
+
+  defp save_last_sync(source, date) do
+    path = Config.last_sync_path(source)
+    path |> Path.dirname() |> File.mkdir_p!()
+
+    case File.write(path, Date.to_iso8601(date)) do
+      :ok -> :ok
+      {:error, reason} -> Logger.warning("[sync] Failed to save last sync date for #{source}: #{inspect(reason)}")
+    end
+  end
+
+  defp write_records(measurement, tags, records, parser) do
+    Enum.reduce(records, true, fn record, ok ->
+      case parser.(record) do
+        {:ok, fields, timestamp} ->
+          case InfluxWriter.write(measurement, tags, fields, timestamp) do
+            :ok ->
+              ok
+
+            {:error, reason} ->
+              Logger.error("[sync] InfluxDB write error for #{measurement}: #{inspect(reason)}")
+              false
+          end
+
+        :skip ->
+          ok
+      end
+    end)
+  end
+
+  # Interval: {date: "2026-04-05", starttime: " 12:00 am", consumption: 0.226, generation: 0}
+  defp parse_interval_record(%{"date" => date_str, "starttime" => time_str, "consumption" => consumption} = record) do
+    case parse_interval_timestamp(date_str, time_str) do
+      {:ok, timestamp} ->
+        fields = %{consumption: consumption / 1.0}
+
+        fields =
+          case record["generation"] do
+            v when is_number(v) -> Map.put(fields, :generation, v / 1.0)
+            _ -> fields
+          end
+
+        {:ok, fields, timestamp}
+
+      :error ->
+        :skip
+    end
+  end
+
+  defp parse_interval_record(_), do: :skip
+
+  # Daily: {date: "12/04/2025", reading: 37.86, startreading: "72366.148", endreading: "72404.005"}
+  defp parse_daily_record(%{"date" => date_str, "reading" => reading} = record) do
+    case parse_mdy_date(date_str) do
+      {:ok, timestamp} ->
+        fields = %{reading: reading / 1.0}
+
+        fields =
+          case parse_float_str(record["startreading"]) do
+            {:ok, v} -> Map.put(fields, :startreading, v)
+            :error -> fields
+          end
+
+        fields =
+          case parse_float_str(record["endreading"]) do
+            {:ok, v} -> Map.put(fields, :endreading, v)
+            :error -> fields
+          end
+
+        {:ok, fields, timestamp}
+
+      :error ->
+        :skip
+    end
+  end
+
+  defp parse_daily_record(_), do: :skip
+
+  # Monthly: {startdate: "04/15/2024", actl_kwh_usg: 1074, mtrd_kwh_usg: 0, blld_kwh_usg: 0}
+  defp parse_monthly_record(%{"startdate" => date_str, "actl_kwh_usg" => actl_kwh} = record) do
+    case parse_mdy_date(date_str) do
+      {:ok, timestamp} ->
+        fields = %{
+          actl_kwh_usg: actl_kwh / 1.0,
+          mtrd_kwh_usg: record["mtrd_kwh_usg"] / 1.0,
+          blld_kwh_usg: record["blld_kwh_usg"] / 1.0
+        }
+
+        {:ok, fields, timestamp}
+
+      :error ->
+        :skip
+    end
+  end
+
+  defp parse_monthly_record(_), do: :skip
+
+  # ISO date "2026-04-05" + 12h time " 12:00 am" → Unix timestamp in configured timezone
+  defp parse_interval_timestamp(date_str, time_str) do
+    with {:ok, date} <- Date.from_iso8601(date_str),
+         {:ok, {h, m}} <- parse_12h_time(time_str),
+         {:ok, time} <- Time.new(h, m, 0),
+         {:ok, naive} <- NaiveDateTime.new(date, time) do
+      {:ok, DateTime.to_unix(DateTime.from_naive!(naive, Config.timezone()))}
+    else
+      _ -> :error
+    end
+  end
+
+  # " 12:00 am" / "1:15 pm" → {hour24, minute}
+  defp parse_12h_time(time_str) do
+    case Regex.run(~r/^\s*(\d{1,2}):(\d{2})\s*(am|pm)$/i, time_str) do
+      [_, h_str, m_str, period] ->
+        h = String.to_integer(h_str)
+        m = String.to_integer(m_str)
+
+        h24 =
+          case String.downcase(period) do
+            "am" -> if h == 12, do: 0, else: h
+            "pm" -> if h == 12, do: 12, else: h + 12
+          end
+
+        {:ok, {h24, m}}
+
+      _ ->
+        :error
+    end
+  end
+
+  # "MM/DD/YYYY" → Unix timestamp at midnight in configured timezone
+  defp parse_mdy_date(date_str) do
+    case Regex.run(~r/^(\d{2})\/(\d{2})\/(\d{4})$/, date_str) do
+      [_, mo, d, y] ->
+        case Date.new(String.to_integer(y), String.to_integer(mo), String.to_integer(d)) do
+          {:ok, date} ->
+            naive = NaiveDateTime.new!(date, ~T[00:00:00])
+            {:ok, DateTime.to_unix(DateTime.from_naive!(naive, Config.timezone()))}
+
+          _ ->
+            :error
+        end
+
+      _ ->
+        :error
+    end
+  end
+
+  defp parse_float_str(v) when is_binary(v) do
+    case Float.parse(v) do
+      {f, _} -> {:ok, f}
+      :error -> :error
+    end
+  end
+
+  defp parse_float_str(_), do: :error
 
   defp ping_healthcheck(signal) do
     case Config.healthchecks_ping_url() do

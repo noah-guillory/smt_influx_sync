@@ -235,6 +235,82 @@ defmodule SmtInfluxSync.SMTClient do
     end
   end
 
+  @doc """
+  Fetches 15-minute interval reads for the given date range.
+  Returns {:ok, list} where each item is a raw map from the API.
+  """
+  def get_interval_data(token, esiid, start_date, end_date) do
+    body = %{esiid: esiid, startDate: format_date(start_date), endDate: format_date(end_date)}
+
+    case authed_post(token, "/usage/interval", body) do
+      {:ok, %{status: 200, body: %{"intervaldata" => data}}} ->
+        {:ok, List.wrap(data)}
+
+      {:ok, %{status: 401}} ->
+        {:error, :unauthorized}
+
+      {:ok, %{status: status, body: body}} ->
+        Logger.error("SMT get_interval_data unexpected status #{status}: #{inspect(body)}")
+        {:error, {:unexpected_status, status}}
+
+      {:error, reason} ->
+        {:error, {:http_error, reason}}
+    end
+  end
+
+  @doc """
+  Fetches daily usage for the given date range.
+  Returns {:ok, list} where each item is a raw map from the API.
+  """
+  def get_daily_data(token, esiid, start_date, end_date) do
+    body = %{esiid: esiid, startDate: format_date(start_date), endDate: format_date(end_date)}
+
+    case authed_post(token, "/usage/daily", body) do
+      {:ok, %{status: 200, body: %{"dailyData" => data}}} ->
+        {:ok, List.wrap(data)}
+
+      {:ok, %{status: 401}} ->
+        {:error, :unauthorized}
+
+      {:ok, %{status: status, body: body}} ->
+        Logger.error("SMT get_daily_data unexpected status #{status}: #{inspect(body)}")
+        {:error, {:unexpected_status, status}}
+
+      {:error, reason} ->
+        {:error, {:http_error, reason}}
+    end
+  end
+
+  @doc """
+  Fetches monthly usage for the given date range.
+  Returns {:ok, list} where each item is a raw map from the API.
+  """
+  def get_monthly_data(token, esiid, start_date, end_date) do
+    body = %{esiid: esiid, startDate: format_date(start_date), endDate: format_date(end_date)}
+
+    case authed_post(token, "/usage/monthly", body) do
+      {:ok, %{status: 200, body: %{"monthlyData" => data}}} ->
+        {:ok, List.wrap(data)}
+
+      {:ok, %{status: 401}} ->
+        {:error, :unauthorized}
+
+      {:ok, %{status: status, body: body}} ->
+        Logger.error("SMT get_monthly_data unexpected status #{status}: #{inspect(body)}")
+        {:error, {:unexpected_status, status}}
+
+      {:error, reason} ->
+        {:error, {:http_error, reason}}
+    end
+  end
+
+  @doc """
+  Formats an Elixir Date as "MM/DD/YYYY" for SMT API requests.
+  """
+  def format_date(%Date{} = date) do
+    Calendar.strftime(date, "%m/%d/%Y")
+  end
+
   defp parse_float(nil), do: nil
   defp parse_float(v) when is_float(v), do: v
   defp parse_float(v) when is_integer(v), do: v / 1.0
