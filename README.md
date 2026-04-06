@@ -27,14 +27,26 @@ INFLUX_TOKEN=your-influxdb-token
 INFLUX_ORG=your-org
 INFLUX_BUCKET=your-bucket
 
+# Optional: Healthchecks.io ping URL for uptime monitoring (e.g. https://hc-ping.com/<uuid>)
+# HEALTHCHECKS_PING_URL=
+
 # Optional: sync interval in milliseconds (default: 1800000 = 30 minutes)
 # SMT enforces a rate limit of 2 reads/hour and 24 reads/day.
 # SYNC_INTERVAL_MS=1800000
 
-# Path for the DETS file that persists pending InfluxDB writes across restarts.
-# PENDING_WRITES_PATH=/data/influx_pending_writes.dets
+# Optional: HTTP timeout for SMT API requests in milliseconds (default: 120000 = 2 minutes)
+# Interval data fetches over a 24-month window can be slow.
+# SMT_REQUEST_TIMEOUT_MS=120000
 
-# Path to persist the SMT auth token across container restarts.
+# Optional: timezone for interpreting SMT timestamps (default: America/Chicago)
+# TZ=America/Chicago
+
+# Optional: base directory for all persisted state (token, pending writes, last sync dates).
+# Mount this as a Docker volume to survive container restarts.
+# DATA_DIR=/data
+
+# Optional: override individual file paths within DATA_DIR.
+# PENDING_WRITES_PATH=/data/influx_pending_writes.dets
 # TOKEN_PATH=/data/smt_token
 ```
 

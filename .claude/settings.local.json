@@ -8,7 +8,8 @@
       "WebFetch(domain:community.home-assistant.io)",
       "WebFetch(domain:kandi.openweaver.com)",
       "WebFetch(domain:www.home-assistant.io)",
-      "Bash(mix:*)"
+      "Bash(mix:*)",
+      "WebFetch(domain:healthchecks.io)"
     ]
   }
 }

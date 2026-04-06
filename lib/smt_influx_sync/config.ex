@@ -22,6 +22,8 @@ defmodule SmtInfluxSync.Config do
 
   def healthchecks_ping_url, do: Application.get_env(@app, :healthchecks_ping_url)
 
+  def smt_request_timeout_ms, do: Application.get_env(@app, :smt_request_timeout_ms, 120_000)
+
   def sync_interval_ms, do: Application.get_env(@app, :sync_interval_ms, 1_800_000)
   def poll_interval_ms, do: Application.get_env(@app, :poll_interval_ms, 5_000)
   def poll_max_attempts, do: Application.get_env(@app, :poll_max_attempts, 24)

@@ -189,7 +189,8 @@ defmodule SmtInfluxSync.SMTClient do
         json: body,
         headers: [{"authorization", "Bearer #{token}"}, {"user-agent", @user_agent}],
         redirect_trusted: true,
-        retry: false
+        retry: false,
+        receive_timeout: SmtInfluxSync.Config.smt_request_timeout_ms()
       )
 
     log_result(result)
