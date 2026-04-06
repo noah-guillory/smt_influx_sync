@@ -24,7 +24,8 @@ defmodule SmtInfluxSync.MixProject do
     [
       {:req, "~> 0.5"},
       {:jason, "~> 1.4"},
-      {:dotenvy, "~> 1.1", only: :dev}
+      {:tzdata, "~> 1.1"},
+      {:dotenv, "~> 3.0.0", only: [:dev, :test]}
     ]
   end
 end

@@ -1,23 +1,39 @@
 defmodule SmtInfluxSync.SMTClient do
   require Logger
 
-  @base_url "https://smartmetertexas.com/api"
+  @base_url "https://www.smartmetertexas.com/api"
+  @user_agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
   @doc """
   Authenticates with Smart Meter Texas and returns a Bearer token.
   """
   def authenticate(username, password) do
-    case Req.post("#{@base_url}/user/authenticate",
-           json: %{username: username, password: password, rememberMe: false},
-           retry: false
-         ) do
+    url = "https://www.smartmetertexas.com/commonapi/user/authenticate"
+    req_headers = [{"content-type", "application/json"}, {"user-agent", @user_agent}]
+
+    Logger.debug(
+      "SMT POST #{url}\n  req headers: #{inspect(req_headers)}\n  req body: %{username: \"#{username}\", password: \"[REDACTED]\", rememberMe: true}"
+    )
+
+    result =
+      Req.post(url,
+        json: %{username: username, password: password, rememberMe: true},
+        headers: [{"user-agent", @user_agent}],
+        redirect_trusted: true,
+        retry: false
+      )
+
+    log_result(result)
+
+    case result do
       {:ok, %{status: 200, body: %{"token" => token}}} ->
         {:ok, token}
 
       {:ok, %{status: 400, body: %{"errormessage" => msg}}} ->
         {:error, {:auth_failed, msg}}
 
-      {:ok, %{status: status}} ->
+      {:ok, %{status: status, body: body}} ->
+        Logger.error("SMT authenticate unexpected status #{status}: #{inspect(body)}")
         {:error, {:unexpected_status, status}}
 
       {:error, reason} ->
@@ -39,10 +55,12 @@ defmodule SmtInfluxSync.SMTClient do
 
         {:ok, parsed}
 
-      {:ok, %{status: 401}} ->
+      {:ok, %{status: 401, body: body}} ->
+        Logger.error("SMT get_meters 401: #{inspect(body)}")
         {:error, :unauthorized}
 
-      {:ok, %{status: status}} ->
+      {:ok, %{status: status, body: body}} ->
+        Logger.error("SMT get_meters unexpected status #{status}: #{inspect(body)}")
         {:error, {:unexpected_status, status}}
 
       {:error, reason} ->
@@ -61,13 +79,49 @@ defmodule SmtInfluxSync.SMTClient do
       {:ok, %{status: 200, body: %{"data" => %{"statusCode" => "5031"}}}} ->
         {:error, :rate_limited}
 
-      {:ok, %{status: 401}} ->
+      {:ok, %{status: 401, body: body}} ->
+        Logger.error("SMT request_odr 401: #{inspect(body)}")
         {:error, :unauthorized}
 
       {:ok, %{status: 200, body: %{"data" => %{"statusCode" => code, "statusReason" => reason}}}} ->
         {:error, {:odr_failed, code, reason}}
 
-      {:ok, %{status: status}} ->
+      {:ok, %{status: status, body: body}} ->
+        Logger.error("SMT request_odr unexpected status #{status}: #{inspect(body)}")
+        {:error, {:unexpected_status, status}}
+
+      {:error, reason} ->
+        {:error, {:http_error, reason}}
+    end
+  end
+
+  @doc """
+  Fetches the most recent ODR result without polling.
+  Returns {:ok, reading} if a COMPLETED read exists, {:ok, :no_data} if
+  the status is PENDING or the response contains no useful data, or
+  {:error, reason} on failure.
+  """
+  def get_latest_read(token, esiid) do
+    case authed_post(token, "/usage/latestodrread", %{ESIID: esiid}) do
+      {:ok, %{status: 200, body: %{"data" => %{"odrstatus" => "COMPLETED"} = data}}} ->
+        {:ok,
+         %{
+           value: parse_float(data["odrread"]),
+           usage: parse_float(data["odrusage"]),
+           date: data["odrdate"]
+         }}
+
+      {:ok, %{status: 200, body: %{"data" => %{"odrstatus" => "PENDING"}}}} ->
+        {:ok, :no_data}
+
+      {:ok, %{status: 200}} ->
+        {:ok, :no_data}
+
+      {:ok, %{status: 401}} ->
+        {:error, :unauthorized}
+
+      {:ok, %{status: status, body: body}} ->
+        Logger.error("SMT get_latest_read unexpected status #{status}: #{inspect(body)}")
         {:error, {:unexpected_status, status}}
 
       {:error, reason} ->
@@ -97,7 +151,12 @@ defmodule SmtInfluxSync.SMTClient do
          }}
 
       {:ok, %{status: 200, body: %{"data" => %{"odrstatus" => "PENDING"}}}} ->
-        Logger.debug("ODR pending, #{attempts - 1} attempts remaining")
+        interval_s = div(SmtInfluxSync.Config.poll_interval_ms(), 1000)
+
+        Logger.info(
+          "[sync] ODR still pending, retrying in #{interval_s}s (#{attempts - 1} attempts left)"
+        )
+
         Process.sleep(SmtInfluxSync.Config.poll_interval_ms())
         do_poll_odr(token, esiid, attempts - 1)
 
@@ -113,11 +172,67 @@ defmodule SmtInfluxSync.SMTClient do
   end
 
   defp authed_post(token, path, body) do
-    Req.post("#{@base_url}#{path}",
-      json: body,
-      headers: [{"authorization", "Bearer #{token}"}],
-      retry: false
+    url = "#{@base_url}#{path}"
+
+    req_headers = [
+      {"authorization", "Bearer [REDACTED]"},
+      {"content-type", "application/json"},
+      {"user-agent", @user_agent}
+    ]
+
+    Logger.debug(
+      "SMT POST #{url}\n  req headers: #{inspect(req_headers)}\n  req body: #{inspect(body)}"
     )
+
+    result =
+      Req.post(url,
+        json: body,
+        headers: [{"authorization", "Bearer #{token}"}, {"user-agent", @user_agent}],
+        redirect_trusted: true,
+        retry: false
+      )
+
+    log_result(result)
+    result
+  end
+
+  defp log_result({:ok, %{status: status, headers: headers, body: body}}) do
+    Logger.debug(
+      "SMT response status=#{status}\n  resp headers: #{inspect(headers)}\n  resp body: #{inspect(body)}"
+    )
+  end
+
+  defp log_result({:error, reason}) do
+    Logger.debug("SMT request error: #{inspect(reason)}")
+  end
+
+  @doc """
+  Parses an SMT odrdate string ("MM/DD/YYYY HH:MM:SS") into a Unix timestamp (seconds).
+  Returns {:ok, unix_seconds} or :error.
+  """
+  def parse_odr_date(nil), do: :error
+
+  def parse_odr_date(date_str) when is_binary(date_str) do
+    case Regex.run(~r/^(\d{2})\/(\d{2})\/(\d{4}) (\d{2}):(\d{2}):(\d{2})$/, date_str) do
+      [_, mo, d, y, h, mi, s] ->
+        case NaiveDateTime.new(
+               String.to_integer(y),
+               String.to_integer(mo),
+               String.to_integer(d),
+               String.to_integer(h),
+               String.to_integer(mi),
+               String.to_integer(s)
+             ) do
+          {:ok, ndt} ->
+            {:ok, DateTime.to_unix(DateTime.from_naive!(ndt, SmtInfluxSync.Config.timezone()))}
+
+          _ ->
+            :error
+        end
+
+      _ ->
+        :error
+    end
   end
 
   defp parse_float(nil), do: nil
