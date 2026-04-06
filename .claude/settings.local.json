@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:github.com)",
+      "WebSearch",
+      "WebFetch(domain:community.home-assistant.io)",
+      "WebFetch(domain:kandi.openweaver.com)",
+      "WebFetch(domain:www.home-assistant.io)",
+      "Bash(mix:*)"
+    ]
+  }
+}
