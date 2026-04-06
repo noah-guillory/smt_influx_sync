@@ -6,6 +6,7 @@ defmodule SmtInfluxSync.InfluxWriter do
 
   @table :influx_pending_writes
   @retry_interval_ms 30_000
+  @batch_size 5_000
 
   # DETS doesn't support :ordered_set, so we sort by monotonic key at flush time.
 
@@ -16,12 +17,21 @@ defmodule SmtInfluxSync.InfluxWriter do
   end
 
   @doc """
-  Queues a write to InfluxDB. If InfluxDB is healthy the write happens
-  immediately; on failure (or while unhealthy) it is stored in ETS and
+  Writes a single point to InfluxDB. If InfluxDB is healthy the write happens
+  immediately; on failure (or while unhealthy) it is stored in DETS and
   flushed once InfluxDB recovers.
   """
   def write(measurement, tags, fields, timestamp_unix_s) do
     GenServer.call(__MODULE__, {:write, measurement, tags, fields, timestamp_unix_s})
+  end
+
+  @doc """
+  Writes a list of `{measurement, tags, fields, timestamp_unix_s}` tuples in
+  batched HTTP requests (up to #{@batch_size} points per request). Much faster
+  than calling `write/4` in a loop. Failed chunks are queued to DETS for retry.
+  """
+  def write_batch(entries) when is_list(entries) do
+    GenServer.call(__MODULE__, {:write_batch, entries}, :infinity)
   end
 
   def pending_count do
@@ -73,6 +83,12 @@ defmodule SmtInfluxSync.InfluxWriter do
     end
   end
 
+  @impl true
+  def handle_call({:write_batch, entries}, _from, state) do
+    state = do_write_batch(entries, state)
+    {:reply, :ok, state}
+  end
+
   def handle_call(:pending_count, _from, state) do
     {:reply, :dets.info(state.table, :size), state}
   end
@@ -98,7 +114,7 @@ defmodule SmtInfluxSync.InfluxWriter do
   defp do_flush_entries([], state), do: %{state | healthy: true}
 
   defp do_flush_entries([{key, entry} | rest], %{table: table} = state) do
-    case do_write(entry) do
+    case do_write_lines(build_line_from_entry(entry)) do
       :ok ->
         :dets.delete(table, key)
         remaining = :dets.info(table, :size)
@@ -113,12 +129,42 @@ defmodule SmtInfluxSync.InfluxWriter do
     end
   end
 
-  defp do_write({measurement, tags, fields, timestamp}) do
-    line = build_line(measurement, tags, fields, timestamp)
+  # Sends a list of entries in chunks, queuing any failed chunks to DETS.
+  defp do_write_batch(entries, state) do
+    if state.healthy and dets_empty?(state.table) do
+      entries
+      |> Enum.chunk_every(@batch_size)
+      |> Enum.reduce(state, fn chunk, state ->
+        body = chunk |> Enum.map(&build_line_from_entry/1) |> Enum.join("\n")
+
+        case do_write_lines(body) do
+          :ok ->
+            state
+
+          {:error, reason} ->
+            Logger.warning(
+              "InfluxDB batch write failed (#{inspect(reason)}), queuing #{length(chunk)} records for retry"
+            )
+
+            Enum.each(chunk, &enqueue(state.table, &1))
+            %{state | healthy: false}
+        end
+      end)
+    else
+      Enum.each(entries, &enqueue(state.table, &1))
+      state
+    end
+  end
+
+  defp do_write(entry) do
+    do_write_lines(build_line_from_entry(entry))
+  end
+
+  defp do_write_lines(body) do
     url = "#{Config.influx_url()}/api/v2/write"
 
     case Req.post(url,
-           body: line,
+           body: body,
            params: [org: Config.influx_org(), bucket: Config.influx_bucket(), precision: "s"],
            headers: [
              {"authorization", "Token #{Config.influx_token()}"},
@@ -139,6 +185,10 @@ defmodule SmtInfluxSync.InfluxWriter do
       {:error, reason} ->
         {:error, {:http_error, reason}}
     end
+  end
+
+  defp build_line_from_entry({measurement, tags, fields, timestamp}) do
+    build_line(measurement, tags, fields, timestamp)
   end
 
   defp enqueue(table, {measurement, tags, _fields, timestamp} = entry) do

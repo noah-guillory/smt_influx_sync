@@ -269,22 +269,16 @@ defmodule SmtInfluxSync.Scheduler do
   end
 
   defp write_records(measurement, tags, records, parser) do
-    Enum.reduce(records, true, fn record, ok ->
-      case parser.(record) do
-        {:ok, fields, timestamp} ->
-          case InfluxWriter.write(measurement, tags, fields, timestamp) do
-            :ok ->
-              ok
+    entries =
+      Enum.flat_map(records, fn record ->
+        case parser.(record) do
+          {:ok, fields, timestamp} -> [{measurement, tags, fields, timestamp}]
+          :skip -> []
+        end
+      end)
 
-            {:error, reason} ->
-              Logger.error("[sync] InfluxDB write error for #{measurement}: #{inspect(reason)}")
-              false
-          end
-
-        :skip ->
-          ok
-      end
-    end)
+    InfluxWriter.write_batch(entries)
+    true
   end
 
   # Interval: {date: "2026-04-05", starttime: " 12:00 am", consumption: 0.226, generation: 0}
