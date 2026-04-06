@@ -26,3 +26,5 @@ smt_influx_sync-*.tar
 .env
 
 .elixir_ls
+
+data/
