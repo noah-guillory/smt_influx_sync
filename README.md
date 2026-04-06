@@ -112,13 +112,123 @@ docker run --rm --env-file .env -v smt_data:/data smt_influx_sync
 
 ## InfluxDB data
 
-Readings are written to the `electricity_usage` measurement with the following schema:
+Four measurements are written, all tagged with `esiid`, `meter_number`, and `source`:
+
+### `electricity_usage` — on-demand reads (ODR)
 
 | Type  | Key            | Description                          |
 |-------|----------------|--------------------------------------|
 | Tag   | `esiid`        | Electric Service Identifier          |
 | Tag   | `meter_number` | Meter number                         |
+| Tag   | `source`       | Always `odr`                         |
 | Field | `value`        | Cumulative meter read (kWh)          |
 | Field | `usage`        | Usage since last read (kWh)          |
 
-Timestamps come from the SMT `odrdate` field, interpreted as Central Time (`America/Chicago`). Override with `TZ` if needed.
+Timestamps come from the SMT `odrdate` field.
+
+### `electricity_interval` — 15-minute interval reads
+
+| Type  | Key            | Description                          |
+|-------|----------------|--------------------------------------|
+| Tag   | `source`       | Always `interval`                    |
+| Field | `consumption`  | Energy consumed in interval (kWh)    |
+| Field | `generation`   | Energy generated in interval (kWh)   |
+
+### `electricity_daily` — daily totals
+
+| Type  | Key            | Description                          |
+|-------|----------------|--------------------------------------|
+| Tag   | `source`       | Always `daily`                       |
+| Field | `reading`      | Total consumption for the day (kWh)  |
+| Field | `startreading` | Cumulative meter at start of day     |
+| Field | `endreading`   | Cumulative meter at end of day       |
+
+### `electricity_monthly` — billing period totals
+
+| Type  | Key             | Description                         |
+|-------|-----------------|-------------------------------------|
+| Tag   | `source`        | Always `monthly`                    |
+| Field | `actl_kwh_usg`  | Actual usage for the period (kWh)   |
+| Field | `mtrd_kwh_usg`  | Metered usage (kWh)                 |
+| Field | `blld_kwh_usg`  | Billed usage (kWh)                  |
+
+All timestamps are interpreted as Central Time (`America/Chicago`).
+
+Interval, daily, and monthly data are fetched over a sliding 12-month window. After each successful sync the last-fetched date is persisted to disk so subsequent syncs only request new data.
+
+## Sample queries
+
+All examples use [Flux](https://docs.influxdata.com/flux/v0/). Replace `"your-bucket"` with your bucket name.
+
+### Usage over the last 24 hours (ODR reads)
+
+```flux
+from(bucket: "your-bucket")
+  |> range(start: -24h)
+  |> filter(fn: (r) => r._measurement == "electricity_usage" and r._field == "usage")
+```
+
+### 15-minute interval consumption for today
+
+```flux
+from(bucket: "your-bucket")
+  |> range(start: today())
+  |> filter(fn: (r) => r._measurement == "electricity_interval" and r._field == "consumption")
+```
+
+### Daily kWh totals for the last 30 days
+
+```flux
+from(bucket: "your-bucket")
+  |> range(start: -30d)
+  |> filter(fn: (r) => r._measurement == "electricity_daily" and r._field == "reading")
+```
+
+### Monthly usage for the last 12 months
+
+```flux
+from(bucket: "your-bucket")
+  |> range(start: -365d)
+  |> filter(fn: (r) => r._measurement == "electricity_monthly" and r._field == "actl_kwh_usg")
+```
+
+### Average 15-minute consumption by hour of day (last 30 days)
+
+```flux
+from(bucket: "your-bucket")
+  |> range(start: -30d)
+  |> filter(fn: (r) => r._measurement == "electricity_interval" and r._field == "consumption")
+  |> hourSelection(start: 0, stop: 24)
+  |> aggregateWindow(every: 1h, fn: mean)
+```
+
+### Peak daily usage this year
+
+```flux
+from(bucket: "your-bucket")
+  |> range(start: -365d)
+  |> filter(fn: (r) => r._measurement == "electricity_daily" and r._field == "reading")
+  |> max()
+```
+
+### Total kWh consumed per month (aggregated from daily reads)
+
+```flux
+from(bucket: "your-bucket")
+  |> range(start: -365d)
+  |> filter(fn: (r) => r._measurement == "electricity_daily" and r._field == "reading")
+  |> aggregateWindow(every: 1mo, fn: sum, createEmpty: false)
+```
+
+### All sources overlaid — compare granularity levels
+
+```flux
+from(bucket: "your-bucket")
+  |> range(start: -30d)
+  |> filter(fn: (r) =>
+      (r._measurement == "electricity_interval" and r._field == "consumption") or
+      (r._measurement == "electricity_daily"    and r._field == "reading") or
+      (r._measurement == "electricity_monthly"  and r._field == "actl_kwh_usg")
+  )
+  |> group(columns: ["_measurement", "source"])
+```
