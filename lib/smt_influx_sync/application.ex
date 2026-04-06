@@ -9,7 +9,8 @@ defmodule SmtInfluxSync.Application do
   def start(_type, _args) do
     children = [
       SmtInfluxSync.InfluxWriter,
-      SmtInfluxSync.Scheduler
+      SmtInfluxSync.Scheduler,
+      SmtInfluxSync.YnabSyncWorker
     ]
 
     # See https://hexdocs.pm/elixir/Supervisor.html

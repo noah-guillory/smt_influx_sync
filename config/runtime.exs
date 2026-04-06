@@ -27,4 +27,11 @@ config :smt_influx_sync,
   pending_writes_path: System.get_env("PENDING_WRITES_PATH", "/data/influx_pending_writes.dets"),
   token_path: System.get_env("TOKEN_PATH", "/data/smt_token"),
   healthchecks_ping_url: System.get_env("HEALTHCHECKS_PING_URL"),
-  timezone: System.get_env("TZ", "America/Chicago")
+  ynab_healthchecks_ping_url: System.get_env("YNAB_HEALTHCHECKS_PING_URL"),
+  timezone: System.get_env("TZ", "America/Chicago"),
+  ynab_access_token: System.fetch_env!("YNAB_ACCESS_TOKEN"),
+  ynab_budget_id: System.fetch_env!("YNAB_BUDGET_ID"),
+  ynab_category_id: System.fetch_env!("YNAB_CATEGORY_ID"),
+  kwh_rate: System.fetch_env!("KWH_RATE") |> String.to_float(),
+  ynab_sync_interval_ms:
+    String.to_integer(System.get_env("YNAB_SYNC_INTERVAL_MS", "#{86_400_000 * 30}"))

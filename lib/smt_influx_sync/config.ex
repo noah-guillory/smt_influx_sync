@@ -21,6 +21,15 @@ defmodule SmtInfluxSync.Config do
     do: Application.get_env(@app, :data_dir, "/data") <> "/last_sync_#{source}"
 
   def healthchecks_ping_url, do: Application.get_env(@app, :healthchecks_ping_url)
+  def ynab_healthchecks_ping_url, do: Application.get_env(@app, :ynab_healthchecks_ping_url)
+
+  def ynab_access_token, do: Application.fetch_env!(@app, :ynab_access_token)
+  def ynab_budget_id, do: Application.fetch_env!(@app, :ynab_budget_id)
+  def ynab_category_id, do: Application.fetch_env!(@app, :ynab_category_id)
+  def kwh_rate, do: Application.fetch_env!(@app, :kwh_rate)
+
+  def ynab_sync_interval_ms,
+    do: Application.get_env(@app, :ynab_sync_interval_ms, 86_400_000 * 30)
 
   def smt_request_timeout_ms, do: Application.get_env(@app, :smt_request_timeout_ms, 120_000)
 

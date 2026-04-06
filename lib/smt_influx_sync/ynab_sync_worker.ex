@@ -1,0 +1,159 @@
+defmodule SmtInfluxSync.YnabSyncWorker do
+  use GenServer
+  require Logger
+
+  alias SmtInfluxSync.Config
+
+  def start_link(_opts) do
+    GenServer.start_link(__MODULE__, [], name: __MODULE__)
+  end
+
+  @impl true
+  def init([]) do
+    Logger.info("[ynab] Worker starting, first sync scheduled immediately")
+    Process.send_after(self(), :sync, 0)
+    {:ok, %{}}
+  end
+
+  @impl true
+  def handle_info(:sync, state) do
+    interval_days = div(Config.ynab_sync_interval_ms(), 86_400_000)
+    Logger.info("[ynab] Sync triggered — next sync in #{interval_days}d")
+    do_sync()
+    Process.send_after(self(), :sync, Config.ynab_sync_interval_ms())
+    {:noreply, state}
+  end
+
+  # --- Private ---
+
+  defp do_sync do
+    started_at = System.monotonic_time(:millisecond)
+    Logger.info("[ynab] Starting sync")
+    ping_healthcheck(:start)
+
+    with {:ok, average_kwh} <- fetch_trailing_average(),
+         :ok <- update_ynab_target(average_kwh) do
+      elapsed_ms = System.monotonic_time(:millisecond) - started_at
+      Logger.info("[ynab] Sync completed successfully in #{elapsed_ms}ms")
+      ping_healthcheck(:success)
+    else
+      {:error, reason} ->
+        elapsed_ms = System.monotonic_time(:millisecond) - started_at
+        Logger.error("[ynab] Sync failed in #{elapsed_ms}ms: #{inspect(reason)}")
+        ping_healthcheck(:fail)
+    end
+  end
+
+  defp fetch_trailing_average do
+    url = "#{Config.influx_url()}/api/v2/query?org=#{Config.influx_org()}"
+
+    flux_query = """
+    from(bucket: "#{Config.influx_bucket()}")
+      |> range(start: -13mo)
+      |> filter(fn: (r) => r._measurement == "electricity_monthly" and r._field == "actl_kwh_usg")
+      |> tail(n: 12)
+      |> sum()
+      |> map(fn: (r) => ({r with _value: r._value / 12.0}))
+    """
+
+    case Req.post(url,
+           body: flux_query,
+           headers: [
+             {"authorization", "Token #{Config.influx_token()}"},
+             {"accept", "application/csv"},
+             {"content-type", "application/vnd.flux"}
+           ],
+           retry: false
+         ) do
+      {:ok, %{status: 200, body: body}} ->
+        parse_flux_scalar(body)
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, {:influx_query_failed, status, body}}
+
+      {:error, reason} ->
+        {:error, {:http_error, reason}}
+    end
+  end
+
+  # Parses a single scalar value out of a Flux CSV response.
+  defp parse_flux_scalar(body) do
+    rows =
+      body
+      |> String.split("\n", trim: true)
+      |> Enum.reject(&String.starts_with?(&1, "#"))
+
+    case rows do
+      [_header, data_row | _] ->
+        value = data_row |> String.split(",") |> Enum.at(3)
+
+        case Float.parse(value || "") do
+          {f, _} -> {:ok, f}
+          :error -> {:error, {:parse_error, data_row}}
+        end
+
+      _ ->
+        {:error, :no_data}
+    end
+  end
+
+  defp update_ynab_target(average_kwh) do
+    target = average_kwh * Config.kwh_rate()
+    goal_target_milliunits = trunc(target * 1000)
+    date_str = Date.to_string(Date.utc_today())
+
+    note =
+      "Updated on #{date_str} to $#{:erlang.float_to_binary(target, decimals: 2)} " <>
+        "based on #{:erlang.float_to_binary(average_kwh, decimals: 2)} kWh avg usage."
+
+    Logger.info(
+      "[ynab] Setting budget target to $#{:erlang.float_to_binary(target, decimals: 2)} " <>
+        "(#{:erlang.float_to_binary(average_kwh, decimals: 2)} kWh @ $#{Config.kwh_rate()}/kWh)"
+    )
+
+    url =
+      "https://api.ynab.com/v1/budgets/#{Config.ynab_budget_id()}/categories/#{Config.ynab_category_id()}"
+
+    case Req.patch(url,
+           json: %{category: %{goal_target: goal_target_milliunits, note: note}},
+           headers: [{"authorization", "Bearer #{Config.ynab_access_token()}"}],
+           retry: false
+         ) do
+      {:ok, %{status: status}} when status in 200..299 ->
+        Logger.info("[ynab] YNAB category updated successfully")
+        :ok
+
+      {:ok, %{status: status, body: body}} ->
+        {:error, {:ynab_api_failed, status, body}}
+
+      {:error, reason} ->
+        {:error, {:http_error, reason}}
+    end
+  end
+
+  defp ping_healthcheck(signal) do
+    case Config.healthchecks_ping_url() do
+      nil ->
+        :ok
+
+      base_url ->
+        url =
+          case signal do
+            :start -> "#{base_url}/start"
+            :success -> base_url
+            :fail -> "#{base_url}/fail"
+          end
+
+        case Req.get(url, retry: false) do
+          {:ok, %{status: status}} when status in 200..299 ->
+            Logger.debug("[ynab] [healthchecks] Pinged #{signal}")
+
+          {:ok, %{status: status}} ->
+            Logger.warning("[ynab] [healthchecks] Ping #{signal} returned HTTP #{status}")
+
+          {:error, reason} ->
+            Logger.warning("[ynab] [healthchecks] Ping #{signal} failed: #{inspect(reason)}")
+        end
+    end
+  end
+end
