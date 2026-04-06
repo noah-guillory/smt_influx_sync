@@ -224,7 +224,12 @@ defmodule SmtInfluxSync.SMTClient do
                String.to_integer(s)
              ) do
           {:ok, ndt} ->
-            {:ok, DateTime.to_unix(DateTime.from_naive!(ndt, SmtInfluxSync.Config.timezone()))}
+            case DateTime.from_naive(ndt, SmtInfluxSync.Config.timezone()) do
+              {:ok, dt} -> {:ok, DateTime.to_unix(dt)}
+              {:ambiguous, dt, _} -> {:ok, DateTime.to_unix(dt)}
+              {:gap, _, dt} -> {:ok, DateTime.to_unix(dt)}
+              {:error, _} -> :error
+            end
 
           _ ->
             :error

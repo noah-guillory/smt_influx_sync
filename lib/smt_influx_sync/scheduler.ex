@@ -359,8 +359,9 @@ defmodule SmtInfluxSync.Scheduler do
     with {:ok, date} <- Date.from_iso8601(date_str),
          {:ok, {h, m}} <- parse_12h_time(time_str),
          {:ok, time} <- Time.new(h, m, 0),
-         {:ok, naive} <- NaiveDateTime.new(date, time) do
-      {:ok, DateTime.to_unix(DateTime.from_naive!(naive, Config.timezone()))}
+         {:ok, naive} <- NaiveDateTime.new(date, time),
+         {:ok, unix} <- naive_to_unix(naive) do
+      {:ok, unix}
     else
       _ -> :error
     end
@@ -393,7 +394,7 @@ defmodule SmtInfluxSync.Scheduler do
         case Date.new(String.to_integer(y), String.to_integer(mo), String.to_integer(d)) do
           {:ok, date} ->
             naive = NaiveDateTime.new!(date, ~T[00:00:00])
-            {:ok, DateTime.to_unix(DateTime.from_naive!(naive, Config.timezone()))}
+            naive_to_unix(naive)
 
           _ ->
             :error
@@ -401,6 +402,18 @@ defmodule SmtInfluxSync.Scheduler do
 
       _ ->
         :error
+    end
+  end
+
+  # Converts a NaiveDateTime to a Unix timestamp in the configured timezone.
+  # For ambiguous times (DST fall-back overlap), picks the earlier UTC offset (pre-transition).
+  # For gap times (DST spring-forward), picks the later datetime (post-gap).
+  defp naive_to_unix(naive) do
+    case DateTime.from_naive(naive, Config.timezone()) do
+      {:ok, dt} -> {:ok, DateTime.to_unix(dt)}
+      {:ambiguous, dt, _} -> {:ok, DateTime.to_unix(dt)}
+      {:gap, _, dt} -> {:ok, DateTime.to_unix(dt)}
+      {:error, reason} -> {:error, reason}
     end
   end
 
