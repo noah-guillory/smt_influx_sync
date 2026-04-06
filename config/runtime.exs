@@ -24,6 +24,6 @@ config :smt_influx_sync,
   poll_max_attempts: 24,
   # Path to the DETS file for persisting pending InfluxDB writes across restarts.
   # Mount the parent directory as a Docker volume to survive container restarts.
-  pending_writes_path: System.get_env("PENDING_WRITES_PATH", "data/influx_pending_writes.dets"),
-  token_path: System.get_env("TOKEN_PATH", "data/smt_token"),
+  pending_writes_path: System.get_env("PENDING_WRITES_PATH", "/data/influx_pending_writes.dets"),
+  token_path: System.get_env("TOKEN_PATH", "/data/smt_token"),
   timezone: System.get_env("TZ", "America/Chicago")

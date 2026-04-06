@@ -12,13 +12,13 @@ defmodule SmtInfluxSync.Config do
   def influx_bucket, do: Application.fetch_env!(@app, :influx_bucket)
 
   def pending_writes_path,
-    do: Application.get_env(@app, :pending_writes_path, "data/influx_pending_writes.dets")
+    do: Application.get_env(@app, :pending_writes_path, "/data/influx_pending_writes.dets")
 
   def token_path,
-    do: Application.get_env(@app, :token_path, "data/smt_token")
+    do: Application.get_env(@app, :token_path, "/data/smt_token")
 
   def last_sync_path(source),
-    do: Application.get_env(@app, :data_dir, "data") <> "/last_sync_#{source}"
+    do: Application.get_env(@app, :data_dir, "/data") <> "/last_sync_#{source}"
 
   def healthchecks_ping_url, do: Application.get_env(@app, :healthchecks_ping_url)
 
