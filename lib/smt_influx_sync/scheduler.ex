@@ -242,7 +242,7 @@ defmodule SmtInfluxSync.Scheduler do
   # On subsequent runs: the day after the last successful sync, capped at 365 days ago.
   # We overlap by 1 day so partially-available data from the previous sync end gets a retry.
   defp last_sync_start(source, today) do
-    floor = Date.add(today, -365)
+    floor = Date.add(today, -730)
 
     case File.read(Config.last_sync_path(source)) do
       {:ok, contents} ->

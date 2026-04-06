@@ -154,7 +154,7 @@ Timestamps come from the SMT `odrdate` field.
 
 All timestamps are interpreted as Central Time (`America/Chicago`).
 
-Interval, daily, and monthly data are fetched over a sliding 12-month window. After each successful sync the last-fetched date is persisted to disk so subsequent syncs only request new data.
+Interval, daily, and monthly data are fetched over a sliding 24-month window. After each successful sync the last-fetched date is persisted to disk so subsequent syncs only request new data.
 
 ## Sample queries
 
@@ -184,11 +184,11 @@ from(bucket: "your-bucket")
   |> filter(fn: (r) => r._measurement == "electricity_daily" and r._field == "reading")
 ```
 
-### Monthly usage for the last 12 months
+### Monthly usage for the last 24 months
 
 ```flux
 from(bucket: "your-bucket")
-  |> range(start: -365d)
+  |> range(start: -730d)
   |> filter(fn: (r) => r._measurement == "electricity_monthly" and r._field == "actl_kwh_usg")
 ```
 
@@ -219,6 +219,31 @@ from(bucket: "your-bucket")
   |> filter(fn: (r) => r._measurement == "electricity_daily" and r._field == "reading")
   |> aggregateWindow(every: 1mo, fn: sum, createEmpty: false)
 ```
+
+### Budget / average billing — current monthly estimate
+
+Utilities calculate budget billing as the sum of the last 12 months of usage divided by 12. This query returns that single value:
+
+```flux
+from(bucket: "your-bucket")
+  |> range(start: -12mo)
+  |> filter(fn: (r) => r._measurement == "electricity_monthly" and r._field == "actl_kwh_usg")
+  |> sum()
+  |> map(fn: (r) => ({r with _value: r._value / 12.0}))
+```
+
+### Budget / average billing — rolling 12-month average over time
+
+Shows how your budget billing amount would have changed each month — useful as a Grafana panel to track the trend:
+
+```flux
+from(bucket: "your-bucket")
+  |> range(start: -24mo)
+  |> filter(fn: (r) => r._measurement == "electricity_monthly" and r._field == "actl_kwh_usg")
+  |> movingAverage(n: 12)
+```
+
+> Note: billing periods in `electricity_monthly` are actual billing cycles (e.g. Apr 15 – May 14), not calendar months, so there may occasionally be 13 records in a 12-month window. This mirrors how your utility calculates it. The rolling query requires 24 months of history in the range so the first full 12-point window can form.
 
 ### All sources overlaid — compare granularity levels
 
