@@ -1,16 +1,119 @@
 defmodule SmtInfluxSync.InfluxWriter do
+  use GenServer
   require Logger
 
   alias SmtInfluxSync.Config
 
-  @doc """
-  Writes a point to InfluxDB v2 using the line protocol.
+  @table :influx_pending_writes
+  @retry_interval_ms 30_000
 
-  Tags and fields are maps with string or atom keys.
-  Timestamp is Unix seconds (integer).
+  # DETS doesn't support :ordered_set, so we sort by monotonic key at flush time.
+
+  # --- Public API ---
+
+  def start_link(_opts) do
+    GenServer.start_link(__MODULE__, [], name: __MODULE__)
+  end
+
+  @doc """
+  Queues a write to InfluxDB. If InfluxDB is healthy the write happens
+  immediately; on failure (or while unhealthy) it is stored in ETS and
+  flushed once InfluxDB recovers.
   """
   def write(measurement, tags, fields, timestamp_unix_s) do
-    line = build_line(measurement, tags, fields, timestamp_unix_s)
+    GenServer.call(__MODULE__, {:write, measurement, tags, fields, timestamp_unix_s})
+  end
+
+  def pending_count do
+    GenServer.call(__MODULE__, :pending_count)
+  end
+
+  # --- GenServer callbacks ---
+
+  @impl true
+  def init([]) do
+    path = Config.pending_writes_path()
+    path |> Path.dirname() |> File.mkdir_p!()
+
+    case :dets.open_file(@table, type: :set, file: String.to_charlist(path)) do
+      {:ok, table} ->
+        pending = :dets.info(table, :size)
+        if pending > 0, do: Logger.info("Loaded #{pending} pending write(s) from disk")
+        schedule_flush()
+        {:ok, %{table: table, healthy: true}}
+
+      {:error, reason} ->
+        {:stop, {:dets_open_failed, reason}}
+    end
+  end
+
+  @impl true
+  def terminate(_reason, %{table: table}) do
+    :dets.close(table)
+  end
+
+  @impl true
+  def handle_call({:write, measurement, tags, fields, timestamp}, _from, state) do
+    entry = {measurement, tags, fields, timestamp}
+
+    if state.healthy and dets_empty?(state.table) do
+      case do_write(entry) do
+        :ok ->
+          {:reply, :ok, state}
+
+        {:error, reason} ->
+          Logger.warning("InfluxDB write failed (#{inspect(reason)}), queuing for retry")
+          enqueue(state.table, entry)
+          {:reply, :ok, %{state | healthy: false}}
+      end
+    else
+      enqueue(state.table, entry)
+      {:reply, :ok, state}
+    end
+  end
+
+  def handle_call(:pending_count, _from, state) do
+    {:reply, :dets.info(state.table, :size), state}
+  end
+
+  @impl true
+  def handle_info(:flush, state) do
+    state = flush_pending(state)
+    schedule_flush()
+    {:noreply, state}
+  end
+
+  # --- Private ---
+
+  defp flush_pending(%{table: table} = state) do
+    # DETS traversal order is undefined — collect all entries and sort by key.
+    entries =
+      :dets.foldl(fn {k, v}, acc -> [{k, v} | acc] end, [], table)
+      |> Enum.sort_by(fn {{_measurement, _tags, timestamp}, _} -> timestamp end)
+
+    do_flush_entries(entries, state)
+  end
+
+  defp do_flush_entries([], state), do: %{state | healthy: true}
+
+  defp do_flush_entries([{key, entry} | rest], %{table: table} = state) do
+    case do_write(entry) do
+      :ok ->
+        :dets.delete(table, key)
+        remaining = :dets.info(table, :size)
+        Logger.info("Flushed pending write, #{remaining} remaining")
+        do_flush_entries(rest, %{state | healthy: true})
+
+      {:error, reason} ->
+        Logger.warning(
+          "InfluxDB still unhealthy (#{inspect(reason)}), will retry in #{@retry_interval_ms}ms"
+        )
+        %{state | healthy: false}
+    end
+  end
+
+  defp do_write({measurement, tags, fields, timestamp}) do
+    line = build_line(measurement, tags, fields, timestamp)
     url = "#{Config.influx_url()}/api/v2/write"
 
     case Req.post(url,
@@ -36,6 +139,22 @@ defmodule SmtInfluxSync.InfluxWriter do
         {:error, {:http_error, reason}}
     end
   end
+
+  defp enqueue(table, {measurement, tags, _fields, timestamp} = entry) do
+    key = {measurement, tags, timestamp}
+
+    case :dets.lookup(table, key) do
+      [] ->
+        :dets.insert(table, {key, entry})
+
+      [_] ->
+        Logger.info("Duplicate write for #{measurement} at #{timestamp}, skipping")
+    end
+  end
+
+  defp dets_empty?(table), do: :dets.info(table, :size) == 0
+
+  defp schedule_flush, do: Process.send_after(self(), :flush, @retry_interval_ms)
 
   defp build_line(measurement, tags, fields, timestamp) do
     tag_str =
