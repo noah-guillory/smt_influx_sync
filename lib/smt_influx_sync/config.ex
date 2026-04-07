@@ -20,6 +20,11 @@ defmodule SmtInfluxSync.Config do
   def last_sync_path(source),
     do: Application.get_env(@app, :data_dir, "/data") <> "/last_sync_#{source}"
 
+  def odr_daily_count_path,
+    do: Application.get_env(@app, :data_dir, "/data") <> "/odr_daily_count"
+
+  def odr_daily_limit, do: Application.get_env(@app, :odr_daily_limit, 24)
+
   def healthchecks_ping_url, do: Application.get_env(@app, :healthchecks_ping_url)
   def ynab_healthchecks_ping_url, do: Application.get_env(@app, :ynab_healthchecks_ping_url)
 

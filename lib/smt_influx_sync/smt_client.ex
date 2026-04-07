@@ -79,6 +79,9 @@ defmodule SmtInfluxSync.SMTClient do
       {:ok, %{status: 200, body: %{"data" => %{"statusCode" => "5031"}}}} ->
         {:error, :rate_limited}
 
+      {:ok, %{status: 200, body: %{"data" => %{"statusCode" => "5032"}}}} ->
+        {:error, :daily_limit_reached}
+
       {:ok, %{status: 401, body: body}} ->
         Logger.error("SMT request_odr 401: #{inspect(body)}")
         {:error, :unauthorized}
