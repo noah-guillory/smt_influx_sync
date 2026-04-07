@@ -249,6 +249,9 @@ defmodule SmtInfluxSync.SMTClient do
     body = %{esiid: esiid, startDate: format_date(start_date), endDate: format_date(end_date)}
 
     case authed_post(token, "/usage/interval", body) do
+      {:ok, %{status: 200, body: %{"data" => %{"intervaldata" => data}}}} ->
+        {:ok, List.wrap(data)}
+
       {:ok, %{status: 200, body: %{"intervaldata" => data}}} ->
         {:ok, List.wrap(data)}
 
