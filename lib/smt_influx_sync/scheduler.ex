@@ -131,9 +131,9 @@ defmodule SmtInfluxSync.Scheduler do
     Logger.info("[sync] Starting sync for ESIID=#{state.esiid}")
     ping_healthcheck(:start)
 
-    odr_ok =
+    {odr_ok, state} =
       case request_and_read(state) do
-        {:ok, reading, state} ->
+        {:ok, reading, new_state} ->
           timestamp =
             case SMTClient.parse_odr_date(reading.date) do
               {:ok, unix} -> unix
@@ -142,27 +142,30 @@ defmodule SmtInfluxSync.Scheduler do
 
           Logger.info("[sync] ODR complete — value=#{reading.value} kWh, usage=#{reading.usage} kWh, read_date=#{reading.date}")
 
-          case InfluxWriter.write(
-                 "electricity_usage",
-                 %{esiid: state.esiid, meter_number: state.meter_number, source: "odr"},
-                 %{value: reading.value, usage: reading.usage},
-                 timestamp
-               ) do
-            :ok ->
-              true
+          ok =
+            case InfluxWriter.write(
+                   "electricity_usage",
+                   %{esiid: new_state.esiid, meter_number: new_state.meter_number, source: "odr"},
+                   %{value: reading.value, usage: reading.usage},
+                   timestamp
+                 ) do
+              :ok ->
+                true
 
-            {:error, reason} ->
-              Logger.error("[sync] ODR InfluxDB write error: #{inspect(reason)}")
-              false
-          end
+              {:error, reason} ->
+                Logger.error("[sync] ODR InfluxDB write error: #{inspect(reason)}")
+                false
+            end
 
-        {:error, :rate_limited, _state} ->
+          {ok, new_state}
+
+        {:error, :rate_limited, new_state} ->
           Logger.warning("[sync] SMT rate limit hit — skipping ODR this cycle")
-          false
+          {false, new_state}
 
-        {:error, reason, _state} ->
+        {:error, reason, new_state} ->
           Logger.error("[sync] ODR failed: #{inspect(reason)}")
-          false
+          {false, new_state}
       end
 
     historical_ok = sync_historical(state)
