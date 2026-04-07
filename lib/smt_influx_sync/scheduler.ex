@@ -163,6 +163,10 @@ defmodule SmtInfluxSync.Scheduler do
           Logger.warning("[sync] SMT rate limit hit — skipping ODR this cycle")
           {false, new_state}
 
+        {:error, :daily_limit_reached, new_state} ->
+          Logger.warning("[sync] ODR daily limit reached — skipping ODR this cycle")
+          {true, new_state}
+
         {:error, reason, new_state} ->
           Logger.error("[sync] ODR failed: #{inspect(reason)}")
           {false, new_state}
@@ -291,6 +295,44 @@ defmodule SmtInfluxSync.Scheduler do
     case File.write(path, Date.to_iso8601(date)) do
       :ok -> :ok
       {:error, reason} -> Logger.warning("[sync] Failed to save last sync date for #{source}: #{inspect(reason)}")
+    end
+  end
+
+  # Returns the number of ODR requests made today (resets automatically at midnight).
+  defp odr_daily_count do
+    today = Date.to_iso8601(Date.utc_today())
+    path = Config.odr_daily_count_path()
+
+    case File.read(path) do
+      {:ok, contents} ->
+        case String.split(String.trim(contents), "\n") do
+          [^today, count_str] ->
+            case Integer.parse(count_str) do
+              {count, ""} -> count
+              _ -> 0
+            end
+
+          _ ->
+            0
+        end
+
+      {:error, _} ->
+        0
+    end
+  end
+
+  defp increment_odr_daily_count do
+    set_odr_daily_count(odr_daily_count() + 1)
+  end
+
+  defp set_odr_daily_count(count) do
+    today = Date.to_iso8601(Date.utc_today())
+    path = Config.odr_daily_count_path()
+    path |> Path.dirname() |> File.mkdir_p!()
+
+    case File.write(path, "#{today}\n#{count}") do
+      :ok -> :ok
+      {:error, reason} -> Logger.warning("[sync] Failed to save ODR daily count: #{inspect(reason)}")
     end
   end
 
@@ -517,10 +559,18 @@ defmodule SmtInfluxSync.Scheduler do
   end
 
   defp request_odr_and_read(state) do
-    Logger.info("[sync] Requesting on-demand read from SMT")
+    limit = Config.odr_daily_limit()
+    count = odr_daily_count()
+
+    if count >= limit do
+      Logger.warning("[sync] ODR daily limit reached (#{count}/#{limit} today) — skipping ODR this cycle")
+      {:error, :daily_limit_reached, state}
+    else
+      do_request_odr(state, count + 1, limit)
 
     case SMTClient.request_odr(state.token, state.esiid, state.meter_number) do
       :ok ->
+        increment_odr_daily_count()
         Logger.info("[sync] ODR accepted, polling for result")
 
         case SMTClient.poll_odr(state.token, state.esiid) do
@@ -550,12 +600,16 @@ defmodule SmtInfluxSync.Scheduler do
         Logger.info("[sync] Token expired, re-authenticating before ODR")
 
         case reauthenticate(state) do
-          {:ok, state} -> request_odr_and_read(state)
+          {:ok, state} -> do_request_odr(state, attempt_num, limit)
           {:error, reason} -> {:error, reason, state}
         end
 
       {:error, :rate_limited} ->
         {:error, :rate_limited, state}
+
+      {:error, :daily_limit_reached} ->
+        set_odr_daily_count(limit)
+        {:error, :daily_limit_reached, state}
 
       {:error, reason} ->
         {:error, reason, state}
