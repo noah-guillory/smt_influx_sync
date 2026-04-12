@@ -6,6 +6,17 @@ defmodule SmtInfluxSync.Config do
   def smt_esiid, do: Application.fetch_env!(@app, :smt_esiid)
   def smt_meter_number, do: Application.get_env(@app, :smt_meter_number)
 
+  def smt_auth_url,
+    do:
+      Application.get_env(
+        @app,
+        :smt_auth_url,
+        "https://www.smartmetertexas.com/commonapi/user/authenticate"
+      )
+
+  def smt_base_url,
+    do: Application.get_env(@app, :smt_base_url, "https://www.smartmetertexas.com/api")
+
   def influx_url, do: Application.fetch_env!(@app, :influx_url)
   def influx_token, do: Application.fetch_env!(@app, :influx_token)
   def influx_org, do: Application.fetch_env!(@app, :influx_org)
@@ -32,6 +43,8 @@ defmodule SmtInfluxSync.Config do
   def ynab_budget_id, do: Application.fetch_env!(@app, :ynab_budget_id)
   def ynab_category_id, do: Application.fetch_env!(@app, :ynab_category_id)
   def kwh_rate, do: Application.fetch_env!(@app, :kwh_rate)
+
+  def ynab_base_url, do: Application.get_env(@app, :ynab_base_url, "https://api.ynab.com")
 
   def ynab_sync_interval_ms,
     do: Application.get_env(@app, :ynab_sync_interval_ms, 86_400_000 * 30)

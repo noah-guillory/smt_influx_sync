@@ -7,11 +7,10 @@ defmodule SmtInfluxSync.Application do
 
   @impl true
   def start(_type, _args) do
-    children = [
-      SmtInfluxSync.InfluxWriter,
-      SmtInfluxSync.Scheduler,
-      SmtInfluxSync.YnabSyncWorker
-    ]
+    children =
+      [
+        SmtInfluxSync.InfluxWriter
+      ] ++ if Mix.env() == :test, do: [], else: [SmtInfluxSync.Scheduler, SmtInfluxSync.YnabSyncWorker]
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

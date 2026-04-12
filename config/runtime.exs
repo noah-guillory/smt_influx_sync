@@ -7,15 +7,15 @@ import Config
 # end
 
 config :smt_influx_sync,
-  smt_username: System.fetch_env!("SMT_USERNAME"),
-  smt_password: System.fetch_env!("SMT_PASSWORD"),
+  smt_username: System.get_env("SMT_USERNAME", "dummy"),
+  smt_password: System.get_env("SMT_PASSWORD", "dummy"),
   # Set to your specific ESIID, or "*" to auto-discover from your account
   smt_esiid: System.get_env("SMT_ESIID", "*"),
   smt_meter_number: System.get_env("SMT_METER_NUMBER", "136419480"),
-  influx_url: System.fetch_env!("INFLUX_URL"),
-  influx_token: System.fetch_env!("INFLUX_TOKEN"),
-  influx_org: System.fetch_env!("INFLUX_ORG"),
-  influx_bucket: System.fetch_env!("INFLUX_BUCKET"),
+  influx_url: System.get_env("INFLUX_URL", "http://localhost:8086"),
+  influx_token: System.get_env("INFLUX_TOKEN", "dummy"),
+  influx_org: System.get_env("INFLUX_ORG", "dummy"),
+  influx_bucket: System.get_env("INFLUX_BUCKET", "dummy"),
   # Default: 30 minutes (SMT rate limit: 2 reads/hour, 24/day)
   sync_interval_ms: String.to_integer(System.get_env("SYNC_INTERVAL_MS", "1800000")),
   poll_interval_ms: 5_000,
@@ -23,15 +23,16 @@ config :smt_influx_sync,
   smt_request_timeout_ms: String.to_integer(System.get_env("SMT_REQUEST_TIMEOUT_MS", "120000")),
   # Base directory for all persisted state files.
   # Mount this as a Docker volume to survive container restarts.
-  data_dir: System.get_env("DATA_DIR", "/data"),
-  pending_writes_path: System.get_env("PENDING_WRITES_PATH", "/data/influx_pending_writes.dets"),
-  token_path: System.get_env("TOKEN_PATH", "/data/smt_token"),
+  data_dir: System.get_env("DATA_DIR", "/tmp/smt_influx_sync_data"),
+  pending_writes_path:
+    System.get_env("PENDING_WRITES_PATH", "/tmp/smt_influx_sync_data/influx_pending_writes.dets"),
+  token_path: System.get_env("TOKEN_PATH", "/tmp/smt_influx_sync_data/smt_token"),
   healthchecks_ping_url: System.get_env("HEALTHCHECKS_PING_URL"),
   ynab_healthchecks_ping_url: System.get_env("YNAB_HEALTHCHECKS_PING_URL"),
   timezone: System.get_env("TZ", "America/Chicago"),
-  ynab_access_token: System.fetch_env!("YNAB_ACCESS_TOKEN"),
-  ynab_budget_id: System.fetch_env!("YNAB_BUDGET_ID"),
-  ynab_category_id: System.fetch_env!("YNAB_CATEGORY_ID"),
-  kwh_rate: System.fetch_env!("KWH_RATE") |> String.to_float(),
+  ynab_access_token: System.get_env("YNAB_ACCESS_TOKEN", "dummy"),
+  ynab_budget_id: System.get_env("YNAB_BUDGET_ID", "dummy"),
+  ynab_category_id: System.get_env("YNAB_CATEGORY_ID", "dummy"),
+  kwh_rate: System.get_env("KWH_RATE", "0.1") |> String.to_float(),
   ynab_sync_interval_ms:
     String.to_integer(System.get_env("YNAB_SYNC_INTERVAL_MS", "#{86_400_000 * 30}"))

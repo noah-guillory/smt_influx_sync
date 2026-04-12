@@ -76,8 +76,9 @@ defmodule SmtInfluxSync.YnabSyncWorker do
     end
   end
 
+  @doc false
   # Parses a single scalar value out of a Flux CSV response.
-  defp parse_flux_scalar(body) do
+  def parse_flux_scalar(body) do
     rows =
       body
       |> String.split("\n", trim: true)
@@ -85,7 +86,7 @@ defmodule SmtInfluxSync.YnabSyncWorker do
 
     case rows do
       [_header, data_row | _] ->
-        value = data_row |> String.split(",") |> Enum.at(3)
+      value = data_row |> String.split(",") |> Enum.at(5)
 
         case Float.parse(value || "") do
           {f, _} -> {:ok, f}
@@ -112,7 +113,7 @@ defmodule SmtInfluxSync.YnabSyncWorker do
     )
 
     url =
-      "https://api.ynab.com/v1/budgets/#{Config.ynab_budget_id()}/categories/#{Config.ynab_category_id()}"
+      "#{Config.ynab_base_url()}/v1/budgets/#{Config.ynab_budget_id()}/categories/#{Config.ynab_category_id()}"
 
     case Req.patch(url,
            json: %{category: %{goal_target: goal_target_milliunits, note: note}},

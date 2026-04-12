@@ -1,14 +1,15 @@
 defmodule SmtInfluxSync.SMTClient do
   require Logger
 
-  @base_url "https://www.smartmetertexas.com/api"
+  alias SmtInfluxSync.Config
+
   @user_agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
 
   @doc """
   Authenticates with Smart Meter Texas and returns a Bearer token.
   """
   def authenticate(username, password) do
-    url = "https://www.smartmetertexas.com/commonapi/user/authenticate"
+    url = Config.smt_auth_url()
     req_headers = [{"content-type", "application/json"}, {"user-agent", @user_agent}]
 
     Logger.debug(
@@ -175,7 +176,7 @@ defmodule SmtInfluxSync.SMTClient do
   end
 
   defp authed_post(token, path, body) do
-    url = "#{@base_url}#{path}"
+    url = "#{Config.smt_base_url()}#{path}"
 
     req_headers = [
       {"authorization", "Bearer [REDACTED]"},

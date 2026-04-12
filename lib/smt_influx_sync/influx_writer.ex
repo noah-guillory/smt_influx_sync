@@ -207,7 +207,8 @@ defmodule SmtInfluxSync.InfluxWriter do
 
   defp schedule_flush, do: Process.send_after(self(), :flush, @retry_interval_ms)
 
-  defp build_line(measurement, tags, fields, timestamp) do
+  @doc false
+  def build_line(measurement, tags, fields, timestamp) do
     tag_str =
       tags
       |> Enum.map(fn {k, v} -> "#{escape_key(k)}=#{escape_tag_value(v)}" end)
