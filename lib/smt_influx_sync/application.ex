@@ -10,7 +10,11 @@ defmodule SmtInfluxSync.Application do
     children =
       [
         SmtInfluxSync.InfluxWriter
-      ] ++ if Mix.env() == :test, do: [], else: [SmtInfluxSync.Scheduler, SmtInfluxSync.YnabSyncWorker]
+      ] ++
+        if(Application.get_env(:smt_influx_sync, :start_workers, true),
+          do: [SmtInfluxSync.Scheduler, SmtInfluxSync.YnabSyncWorker],
+          else: []
+        )
 
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options

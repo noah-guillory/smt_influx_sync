@@ -33,4 +33,5 @@ config :smt_influx_sync,
   ynab_category_id: System.get_env("YNAB_CATEGORY_ID", "dummy"),
   kwh_rate: System.get_env("KWH_RATE", "0.1") |> String.to_float(),
   ynab_sync_interval_ms:
-    String.to_integer(System.get_env("YNAB_SYNC_INTERVAL_MS", "#{86_400_000 * 30}"))
+    String.to_integer(System.get_env("YNAB_SYNC_INTERVAL_MS", "#{86_400_000 * 30}")),
+  start_workers: config_env() != :test
