@@ -7,6 +7,8 @@ defmodule SmtInfluxSync.SMT.SessionTest do
     Application.put_env(:smt_influx_sync, :smt_auth_url, "http://localhost:#{bypass.port}/auth")
     Application.put_env(:smt_influx_sync, :smt_base_url, "http://localhost:#{bypass.port}")
     Application.put_env(:smt_influx_sync, :token_path, "/tmp/smt_token_test")
+    Application.put_env(:smt_influx_sync, :smt_esiid, "*")
+    Application.put_env(:smt_influx_sync, :smt_meter_number, "MN1")
     # Clean up token path before each test
     File.rm("/tmp/smt_token_test")
     {:ok, bypass: bypass}

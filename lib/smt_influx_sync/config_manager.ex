@@ -18,8 +18,9 @@ defmodule SmtInfluxSync.ConfigManager do
 
   @impl true
   def init(_opts) do
+    data_dir = Application.get_env(@app, :data_dir, "/data")
     # Ensure data directory exists immediately
-    File.mkdir_p!(Application.get_env(@app, :data_dir, "/data"))
+    File.mkdir_p!(data_dir)
     
     overrides = load_overrides()
     

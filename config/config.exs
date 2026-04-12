@@ -21,3 +21,5 @@ config :smt_influx_sync, SmtInfluxSyncWeb.Endpoint,
 
 config :smt_influx_sync, SmtInfluxSync.PubSub,
   adapter: Phoenix.PubSub.PG2
+
+import_config "#{config_env()}.exs"

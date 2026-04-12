@@ -21,10 +21,6 @@ config :smt_influx_sync,
   smt_request_timeout_ms: String.to_integer(System.get_env("SMT_REQUEST_TIMEOUT_MS", "120000")),
   # Base directory for all persisted state files.
   # Mount this as a Docker volume to survive container restarts.
-  data_dir: System.get_env("DATA_DIR", "/tmp/smt_influx_sync_data"),
-  pending_writes_path:
-    System.get_env("PENDING_WRITES_PATH", "/tmp/smt_influx_sync_data/influx_pending_writes.dets"),
-  token_path: System.get_env("TOKEN_PATH", "/tmp/smt_influx_sync_data/smt_token"),
   healthchecks_ping_url: System.get_env("HEALTHCHECKS_PING_URL"),
   ynab_healthchecks_ping_url: System.get_env("YNAB_HEALTHCHECKS_PING_URL"),
   timezone: System.get_env("TZ", "America/Chicago"),
@@ -45,6 +41,14 @@ config :smt_influx_sync,
   initial_lookback_days:
     String.to_integer(System.get_env("INITIAL_LOOKBACK_DAYS", "730")),
   start_workers: config_env() != :test
+
+if config_env() != :test do
+  config :smt_influx_sync,
+    data_dir: System.get_env("DATA_DIR", "/tmp/smt_influx_sync_data"),
+    pending_writes_path:
+      System.get_env("PENDING_WRITES_PATH", "/tmp/smt_influx_sync_data/influx_pending_writes.dets"),
+    token_path: System.get_env("TOKEN_PATH", "/tmp/smt_influx_sync_data/smt_token")
+end
 
 # Ecto Repo configuration
 if config_env() != :test do
