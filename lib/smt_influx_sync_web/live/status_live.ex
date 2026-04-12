@@ -38,6 +38,7 @@ defmodule SmtInfluxSyncWeb.StatusLive do
     assign(socket,
       sync_status: fetch_sync_status(),
       influx_status: SmtInfluxSync.InfluxWriter.get_status(),
+      recent_logs: SmtInfluxSync.SyncMetadata.list_recent_logs(10),
       config: %{
         smt_username: Config.smt_username(),
         smt_password: Config.smt_password(),
@@ -124,6 +125,45 @@ defmodule SmtInfluxSyncWeb.StatusLive do
               View Phoenix Dashboard
             </a>
           </div>
+        </div>
+      </div>
+
+      <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 mb-12">
+        <h2 class="text-2xl font-semibold mb-6 text-slate-700">Sync History</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left">
+            <thead>
+              <tr class="text-slate-500 border-b border-slate-100">
+                <th class="pb-3 font-medium">Source</th>
+                <th class="pb-3 font-medium">Status</th>
+                <th class="pb-3 font-medium">Time</th>
+                <th class="pb-3 font-medium">Message</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-50">
+              <%= for log <- @recent_logs do %>
+                <tr>
+                  <td class="py-3 capitalize font-medium text-slate-700"><%= log.source %></td>
+                  <td class="py-3">
+                    <span class={[
+                      "px-2 py-1 rounded-full text-xs font-semibold",
+                      log.status == "success" && "bg-green-100 text-green-700",
+                      log.status == "fail" && "bg-red-100 text-red-700",
+                      log.status == "start" && "bg-blue-100 text-blue-700"
+                    ]}>
+                      <%= log.status %>
+                    </span>
+                  </td>
+                  <td class="py-3 text-slate-500 text-sm">
+                    <%= Calendar.strftime(log.inserted_at, "%m/%d %H:%M:%S") %>
+                  </td>
+                  <td class="py-3 text-slate-600 text-sm truncate max-w-xs">
+                    <%= log.message %>
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
         </div>
       </div>
 

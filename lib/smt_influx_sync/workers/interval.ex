@@ -26,20 +26,24 @@ defmodule SmtInfluxSync.Workers.Interval do
       {:ok, credentials} ->
         Logger.metadata(worker: :interval, esiid: credentials.esiid)
         Logger.info("Starting sync")
+        sync_log = SmtInfluxSync.SyncMetadata.log_start("interval")
         started_at = System.monotonic_time(:millisecond)
 
         case do_sync(credentials) do
           :ok ->
             elapsed = System.monotonic_time(:millisecond) - started_at
             Logger.info("Sync completed successfully in #{elapsed}ms")
+            SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms")
             schedule_sync()
 
           {:error, :unauthorized} ->
             Session.refresh_token()
+            SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Unauthorized, token refreshed")
             schedule_sync(5000)
 
           {:error, reason} ->
             Logger.error("Sync failed: #{inspect(reason)}")
+            SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Sync failed: #{inspect(reason)}")
             schedule_sync()
         end
 

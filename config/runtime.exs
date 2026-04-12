@@ -46,6 +46,18 @@ config :smt_influx_sync,
     String.to_integer(System.get_env("INITIAL_LOOKBACK_DAYS", "730")),
   start_workers: config_env() != :test
 
+# Ecto Repo configuration
+if config_env() != :test do
+  data_dir = System.get_env("DATA_DIR", "/tmp/smt_influx_sync_data")
+  database_path = Path.join(data_dir, "smt_influx_sync.db")
+
+  config :smt_influx_sync, SmtInfluxSync.Repo,
+    database: database_path,
+    pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5"),
+    stacktrace: true,
+    show_sensitive_data_on_connection_error: true
+end
+
 # Phoenix Endpoint configuration
 if config_env() != :test do
   host = System.get_env("PHX_HOST") || "localhost"

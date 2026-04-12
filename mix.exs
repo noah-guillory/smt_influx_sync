@@ -33,7 +33,9 @@ defmodule SmtInfluxSync.MixProject do
       {:phoenix_live_dashboard, "~> 0.8"},
       {:phoenix_pubsub, "~> 2.1"},
       {:telemetry_poller, "~> 1.0"},
-      {:bandit, "~> 1.0"}
+      {:bandit, "~> 1.0"},
+      {:ecto_sqlite3, "~> 0.17"},
+      {:ecto, "~> 3.12"}
     ]
   end
 end

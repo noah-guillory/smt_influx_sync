@@ -29,17 +29,21 @@ defmodule SmtInfluxSync.YnabSyncWorker do
   defp do_sync do
     started_at = System.monotonic_time(:millisecond)
     Logger.info("[ynab] Starting sync")
+    sync_log = SmtInfluxSync.SyncMetadata.log_start("ynab")
     ping_healthcheck(:start)
 
     with {:ok, average_kwh} <- fetch_trailing_average(),
          :ok <- update_ynab_target(average_kwh) do
       elapsed_ms = System.monotonic_time(:millisecond) - started_at
       Logger.info("[ynab] Sync completed successfully in #{elapsed_ms}ms")
+      SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed_ms}ms")
+      SmtInfluxSync.Workers.Helper.save_last_sync_now("ynab")
       ping_healthcheck(:success)
     else
       {:error, reason} ->
         elapsed_ms = System.monotonic_time(:millisecond) - started_at
         Logger.error("[ynab] Sync failed in #{elapsed_ms}ms: #{inspect(reason)}")
+        SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Sync failed: #{inspect(reason)}")
         ping_healthcheck(:fail)
     end
   end

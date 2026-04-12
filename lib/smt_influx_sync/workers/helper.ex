@@ -11,35 +11,37 @@ defmodule SmtInfluxSync.Workers.Helper do
   def last_sync_start(source, today) do
     lookback = Config.initial_lookback_days()
     floor = Date.add(today, -lookback)
-    path = Config.last_sync_path(source)
-
-    case File.read(path) do
-      {:ok, contents} ->
-        case Date.from_iso8601(String.trim(contents)) do
-          {:ok, last_date} ->
-            # Overlap by 1 day so partially-available data from the previous sync end gets a retry.
-            candidate = Date.add(last_date, -1)
-            
-            if Date.compare(candidate, floor) == :lt do
-              Logger.debug("[#{source}] Saved sync date #{last_date} is older than lookback (#{lookback} days), using floor")
-              floor
-            else
-              Logger.debug("[#{source}] Resuming from saved sync date #{last_date} (overlap 1 day)")
-              candidate
-            end
-
-          _ ->
-            Logger.warning("[#{source}] Could not parse saved sync date from #{path}, using floor")
-            floor
+    
+    case SmtInfluxSync.SyncMetadata.get_latest_sync(source) do
+      %{completed_at: completed_at} ->
+        last_date = DateTime.to_date(completed_at)
+        # Overlap by 1 day so partially-available data from the previous sync end gets a retry.
+        candidate = Date.add(last_date, -1)
+        
+        if Date.compare(candidate, floor) == :lt do
+          Logger.debug("[#{source}] Saved sync date #{last_date} from DB is older than lookback (#{lookback} days), using floor")
+          floor
+        else
+          Logger.debug("[#{source}] Resuming from saved sync date #{last_date} from DB (overlap 1 day)")
+          candidate
         end
 
-      {:error, :enoent} ->
-        Logger.info("[#{source}] No sync marker found at #{path}, performing full initial sync (lookback #{lookback} days)")
-        floor
-
-      {:error, reason} ->
-        Logger.warning("[#{source}] Could not read sync marker from #{path} (#{inspect(reason)}), using floor")
-        floor
+      nil ->
+        # Fallback to file for migration or first run
+        path = Config.last_sync_path(source)
+        
+        case File.read(path) do
+          {:ok, contents} ->
+            case Date.from_iso8601(String.trim(contents)) do
+              {:ok, last_date} ->
+                Date.add(last_date, -1)
+              _ ->
+                floor
+            end
+          _ ->
+            Logger.info("[#{source}] No sync marker found in DB or file, performing full initial sync (lookback #{lookback} days)")
+            floor
+        end
     end
   end
 
@@ -47,13 +49,32 @@ defmodule SmtInfluxSync.Workers.Helper do
   Saves the last successful sync date.
   """
   def save_last_sync(source, date) do
+    # Still write to file for backup/compatibility
     path = Config.last_sync_path(source)
     path |> Path.dirname() |> File.mkdir_p!()
+    File.write(path, Date.to_iso8601(date))
 
-    case File.write(path, Date.to_iso8601(date)) do
-      :ok -> :ok
-      {:error, reason} -> Logger.warning("[sync] Failed to save last sync date for #{source}: #{inspect(reason)}")
-    end
+    # Log success in DB (mimic start/success for these older calls)
+    log = SmtInfluxSync.SyncMetadata.log_start(source, "Saved date: #{date}")
+    SmtInfluxSync.SyncMetadata.log_success(log, "Sync completed for date: #{date}")
+    :ok
+  end
+
+  @doc """
+  Saves the current timestamp and timezone as the last successful sync.
+  """
+  def save_last_sync_now(source) do
+    # Still write to file for backup/compatibility
+    path = Config.last_sync_path(source)
+    path |> Path.dirname() |> File.mkdir_p!()
+    now = DateTime.now!(Config.timezone())
+    timestamp = Calendar.strftime(now, "%Y-%m-%d %H:%M:%S %Z")
+    File.write(path, timestamp)
+
+    # Log success in DB
+    log = SmtInfluxSync.SyncMetadata.log_start(source, "Saved timestamp: #{timestamp}")
+    SmtInfluxSync.SyncMetadata.log_success(log, "Sync completed at: #{timestamp}")
+    :ok
   end
 
   @doc """

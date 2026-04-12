@@ -26,27 +26,32 @@ defmodule SmtInfluxSync.Workers.ODR do
       {:ok, credentials} ->
         Logger.metadata(worker: :odr, esiid: credentials.esiid)
         Logger.info("Starting sync")
-        Helper.ping_healthcheck(:start, Config.healthchecks_ping_url())
+        sync_log = SmtInfluxSync.SyncMetadata.log_start("odr")
         started_at = System.monotonic_time(:millisecond)
 
         case do_sync(credentials) do
           :ok ->
             elapsed = System.monotonic_time(:millisecond) - started_at
             Logger.info("Sync completed successfully in #{elapsed}ms")
+            Helper.save_last_sync_now("odr")
+            SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms")
             Helper.ping_healthcheck(:success, Config.healthchecks_ping_url())
             schedule_sync()
 
           {:error, :rate_limited} ->
             Logger.warning("Rate limited, retrying later")
+            SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Rate limited")
             schedule_sync()
 
           {:error, :daily_limit_reached} ->
             Logger.warning("Daily limit reached, retrying tomorrow")
+            SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Daily limit reached")
             # Schedule for roughly next day or just stick to interval
             schedule_sync()
 
           {:error, reason} ->
             Logger.error("Sync failed: #{inspect(reason)}")
+            SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Sync failed: #{inspect(reason)}")
             Helper.ping_healthcheck(:fail, Config.healthchecks_ping_url())
             schedule_sync()
         end

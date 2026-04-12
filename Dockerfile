@@ -33,6 +33,9 @@ COPY --from=builder /app/_build/prod/rel/smt_influx_sync ./
 # Set runtime environment
 ENV MIX_ENV=prod
 
+# Expose Phoenix port
+EXPOSE 4000
+
 # Run the release
 ENTRYPOINT ["bin/smt_influx_sync"]
 CMD ["start"]
