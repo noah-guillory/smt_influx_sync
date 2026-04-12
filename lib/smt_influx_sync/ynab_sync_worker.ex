@@ -110,15 +110,25 @@ defmodule SmtInfluxSync.YnabSyncWorker do
   defp update_ynab_target(average_kwh) do
     target = average_kwh * Config.kwh_rate()
     goal_target_milliunits = trunc(target * 1000)
-    date_str = Date.to_string(Date.utc_today())
+    
+    # Get local time for a more useful timestamp
+    now = DateTime.now!(Config.timezone())
+    timestamp = Calendar.strftime(now, "%Y-%m-%d %H:%M:%S %Z")
+    
+    rate_str = :erlang.float_to_binary(Config.kwh_rate(), decimals: 3)
+    avg_kwh_str = :erlang.float_to_binary(average_kwh, decimals: 2)
+    target_str = :erlang.float_to_binary(target, decimals: 2)
 
-    note =
-      "Updated on #{date_str} to $#{:erlang.float_to_binary(target, decimals: 2)} " <>
-        "based on #{:erlang.float_to_binary(average_kwh, decimals: 2)} kWh avg usage."
+    note = """
+    Last sync: #{timestamp}
+    Calculated Target: $#{target_str}
+    Trailing 12-month average: #{avg_kwh_str} kWh/mo
+    Configured Rate: $#{rate_str}/kWh
+    """ |> String.trim()
 
     Logger.info(
-      "[ynab] Setting budget target to $#{:erlang.float_to_binary(target, decimals: 2)} " <>
-        "(#{:erlang.float_to_binary(average_kwh, decimals: 2)} kWh @ $#{Config.kwh_rate()}/kWh)"
+      "[ynab] Setting budget target to $#{target_str} " <>
+        "(#{avg_kwh_str} kWh @ $#{rate_str}/kWh)"
     )
 
     url =
