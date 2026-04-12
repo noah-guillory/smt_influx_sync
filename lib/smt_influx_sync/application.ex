@@ -7,10 +7,9 @@ defmodule SmtInfluxSync.Application do
 
   @impl true
   def start(_type, _args) do
-    # Run migrations on startup
+    # Run startup tasks (migrations and file migration)
     if Application.get_env(:smt_influx_sync, :run_migrations, true) do
-      run_migrations()
-      migrate_files_to_db()
+      startup_tasks()
     end
 
     children =
@@ -36,8 +35,11 @@ defmodule SmtInfluxSync.Application do
     Supervisor.start_link(children, opts)
   end
 
-  defp run_migrations do
-    Ecto.Migrator.with_repo(SmtInfluxSync.Repo, &Ecto.Migrator.run(&1, :up, all: true))
+  defp startup_tasks do
+    Ecto.Migrator.with_repo(SmtInfluxSync.Repo, fn _repo ->
+      Ecto.Migrator.run(SmtInfluxSync.Repo, :up, all: true)
+      migrate_files_to_db()
+    end)
   end
 
   defp migrate_files_to_db do
