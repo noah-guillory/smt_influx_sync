@@ -10,15 +10,15 @@ defmodule SmtInfluxSync.YnabSyncWorkerTest do
   end
 
   describe "parse_flux_scalar/1" do
-    test "correctly parses valid flux csv" do
+    test "correctly parses valid flux csv with varying column order" do
       body = """
-      #group,false,false,true,true,false,false,true,true
-      #datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,double,string,string,string
-      #default,_result,,,,,,,
-      ,result,table,_start,_stop,_value,_field,_measurement,esiid
-      ,,0,2025-03-12T00:00:00Z,2026-04-12T00:00:00Z,1050.5,actl_kwh_usg,electricity_monthly,12345
+      #group,false,false,true,true,false,false,true,true,true,true
+      #datatype,string,long,dateTime:RFC3339,dateTime:RFC3339,string,string,string,string,string,double
+      #default,_result,,,,,,,,,
+      ,result,table,_start,_stop,_field,_measurement,esiid,meter_number,source,_value
+      ,_result,0,2025-03-13T05:28:23Z,2026-04-12T21:58:23Z,actl_kwh_usg,electricity_monthly,10443720009364021,136419480,monthly,1365.9166666666667\r
       """
-      assert {:ok, 1050.5} == YnabSyncWorker.parse_flux_scalar(body)
+      assert {:ok, 1365.9166666666667} == YnabSyncWorker.parse_flux_scalar(body)
     end
 
     test "returns error for empty response" do

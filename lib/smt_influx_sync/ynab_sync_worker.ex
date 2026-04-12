@@ -79,18 +79,27 @@ defmodule SmtInfluxSync.YnabSyncWorker do
   @doc false
   # Parses a single scalar value out of a Flux CSV response.
   def parse_flux_scalar(body) do
-    rows =
+    lines =
       body
-      |> String.split("\n", trim: true)
+      |> String.split(~r/\r?\n/, trim: true)
       |> Enum.reject(&String.starts_with?(&1, "#"))
 
-    case rows do
-      [_header, data_row | _] ->
-      value = data_row |> String.split(",") |> Enum.at(5)
+    case lines do
+      [header, data_row | _] ->
+        header_cols = String.split(header, ",")
+        data_cols = String.split(data_row, ",")
 
-        case Float.parse(value || "") do
-          {f, _} -> {:ok, f}
-          :error -> {:error, {:parse_error, data_row}}
+        case Enum.find_index(header_cols, &(&1 == "_value")) do
+          nil ->
+            {:error, :value_column_not_found}
+
+          idx ->
+            value_str = Enum.at(data_cols, idx) |> String.trim()
+
+            case Float.parse(value_str) do
+              {f, _} -> {:ok, f}
+              :error -> {:error, {:parse_error, data_row}}
+            end
         end
 
       _ ->
