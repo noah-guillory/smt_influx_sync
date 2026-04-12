@@ -566,8 +566,11 @@ defmodule SmtInfluxSync.Scheduler do
       Logger.warning("[sync] ODR daily limit reached (#{count}/#{limit} today) — skipping ODR this cycle")
       {:error, :daily_limit_reached, state}
     else
-      do_request_odr(state, count + 1, limit)
+      execute_odr_request(state)
+    end
+  end
 
+  defp execute_odr_request(state) do
     case SMTClient.request_odr(state.token, state.esiid, state.meter_number) do
       :ok ->
         increment_odr_daily_count()
@@ -600,7 +603,7 @@ defmodule SmtInfluxSync.Scheduler do
         Logger.info("[sync] Token expired, re-authenticating before ODR")
 
         case reauthenticate(state) do
-          {:ok, state} -> do_request_odr(state, attempt_num, limit)
+          {:ok, state} -> execute_odr_request(state)
           {:error, reason} -> {:error, reason, state}
         end
 
@@ -608,7 +611,7 @@ defmodule SmtInfluxSync.Scheduler do
         {:error, :rate_limited, state}
 
       {:error, :daily_limit_reached} ->
-        set_odr_daily_count(limit)
+        set_odr_daily_count(Config.odr_daily_limit())
         {:error, :daily_limit_reached, state}
 
       {:error, reason} ->

@@ -132,7 +132,7 @@ defmodule SmtInfluxSync.YnabSyncWorker do
   end
 
   defp ping_healthcheck(signal) do
-    case Config.healthchecks_ping_url() do
+    case Config.ynab_healthchecks_ping_url() do
       nil ->
         :ok
 
