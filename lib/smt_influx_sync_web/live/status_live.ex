@@ -16,6 +16,21 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   end
 
   @impl true
+  def handle_event("force_sync", %{"source" => source}, socket) do
+    worker =
+      case source do
+        "daily" -> SmtInfluxSync.Workers.Daily
+        "interval" -> SmtInfluxSync.Workers.Interval
+        "monthly" -> SmtInfluxSync.Workers.Monthly
+        "odr" -> SmtInfluxSync.Workers.ODR
+        "ynab" -> SmtInfluxSync.YnabSyncWorker
+      end
+
+    send(Process.whereis(worker), :sync)
+    {:noreply, socket |> put_flash(:info, "Sync triggered for #{source}!")}
+  end
+
+  @impl true
   def handle_event("save_config", params, socket) do
     # Filter out empty strings or handle conversions as needed
     updates =
@@ -59,8 +74,14 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   defp fetch_sync_status do
     ~w(daily interval monthly odr ynab)
     |> Enum.map(fn source ->
-      path = Config.last_sync_path(source)
-      last_sync = if File.exists?(path), do: File.read!(path) |> String.trim(), else: "Never"
+      last_sync = 
+        case SmtInfluxSync.SyncMetadata.get_latest_sync(source) do
+          nil -> 
+            path = Config.last_sync_path(source)
+            if File.exists?(path), do: File.read!(path) |> String.trim(), else: "Never"
+          log -> 
+            Calendar.strftime(log.completed_at, "%m/%d %H:%M:%S")
+        end
       {source, last_sync}
     end)
   end
@@ -79,9 +100,18 @@ defmodule SmtInfluxSyncWeb.StatusLive do
           <h2 class="text-xl font-semibold mb-4 text-slate-700">Sync Status</h2>
           <dl class="space-y-3">
             <%= for {source, last_sync} <- @sync_status do %>
-              <div class="flex justify-between border-b border-slate-100 pb-2">
-                <dt class="text-slate-500 capitalize"><%= source %></dt>
-                <dd class="font-medium text-slate-900"><%= last_sync %></dd>
+              <div class="flex justify-between items-center border-b border-slate-100 pb-2">
+                <div>
+                  <dt class="text-slate-500 capitalize"><%= source %></dt>
+                  <dd class="font-medium text-slate-900"><%= last_sync %></dd>
+                </div>
+                <button
+                  phx-click="force_sync"
+                  phx-value-source={source}
+                  class="text-xs px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-semibold rounded transition"
+                >
+                  Sync Now
+                </button>
               </div>
             <% end %>
           </dl>
