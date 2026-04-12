@@ -74,21 +74,20 @@ defmodule SmtInfluxSync.SMTClient do
   """
   def request_odr(token, esiid, meter_number) do
     case authed_post(token, "/ondemandread", %{ESIID: esiid, MeterNumber: meter_number}) do
-      {:ok, %{status: 200, body: %{"data" => %{"statusCode" => "0"}}}} ->
-        :ok
+      {:ok, %{status: 200, body: %{"data" => %{"statusCode" => code} = data}}} ->
+        case to_string(code) do
+          "0" -> :ok
+          "5031" -> {:error, :rate_limited}
+          "5032" -> {:error, :daily_limit_reached}
+          other -> {:error, {:odr_failed, other, data["statusReason"]}}
+        end
 
-      {:ok, %{status: 200, body: %{"data" => %{"statusCode" => "5031"}}}} ->
-        {:error, :rate_limited}
-
-      {:ok, %{status: 200, body: %{"data" => %{"statusCode" => "5032"}}}} ->
-        {:error, :daily_limit_reached}
+      {:ok, %{status: 200, body: %{"data" => "upstream request timeout"}}} ->
+        {:error, :timeout}
 
       {:ok, %{status: 401, body: body}} ->
         Logger.error("SMT request_odr 401: #{inspect(body)}")
         {:error, :unauthorized}
-
-      {:ok, %{status: 200, body: %{"data" => %{"statusCode" => code, "statusReason" => reason}}}} ->
-        {:error, {:odr_failed, code, reason}}
 
       {:ok, %{status: status, body: body}} ->
         Logger.error("SMT request_odr unexpected status #{status}: #{inspect(body)}")
@@ -117,6 +116,9 @@ defmodule SmtInfluxSync.SMTClient do
 
       {:ok, %{status: 200, body: %{"data" => %{"odrstatus" => "PENDING"}}}} ->
         {:ok, :no_data}
+
+      {:ok, %{status: 200, body: %{"data" => "upstream request timeout"}}} ->
+        {:error, :timeout}
 
       {:ok, %{status: 200}} ->
         {:ok, :no_data}
@@ -164,6 +166,11 @@ defmodule SmtInfluxSync.SMTClient do
         Process.sleep(SmtInfluxSync.Config.poll_interval_ms())
         do_poll_odr(token, esiid, attempts - 1)
 
+      {:ok, %{status: 200, body: %{"data" => "upstream request timeout"}}} ->
+        Logger.warning("[sync] ODR poll hit upstream timeout, retrying...")
+        Process.sleep(SmtInfluxSync.Config.poll_interval_ms())
+        do_poll_odr(token, esiid, attempts - 1)
+
       {:ok, %{status: 401}} ->
         {:error, :unauthorized}
 
@@ -193,7 +200,7 @@ defmodule SmtInfluxSync.SMTClient do
         json: body,
         headers: [{"authorization", "Bearer #{token}"}, {"user-agent", @user_agent}],
         redirect_trusted: true,
-        retry: false,
+        retry: :safe_transient,
         receive_timeout: SmtInfluxSync.Config.smt_request_timeout_ms()
       )
 

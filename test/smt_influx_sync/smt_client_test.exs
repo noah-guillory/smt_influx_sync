@@ -57,5 +57,25 @@ defmodule SmtInfluxSync.SMTClientTest do
 
       assert {:error, :rate_limited} == SMTClient.request_odr("token", "esiid", "mn")
     end
+
+    test "request_odr/3 daily limit reached", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/ondemandread", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{data: %{statusCode: "5032", statusReason: "Limit reached"}}))
+      end)
+
+      assert {:error, :daily_limit_reached} == SMTClient.request_odr("token", "esiid", "mn")
+    end
+
+    test "request_odr/3 upstream timeout", %{bypass: bypass} do
+      Bypass.expect_once(bypass, "POST", "/ondemandread", fn conn ->
+        conn
+        |> Plug.Conn.put_resp_header("content-type", "application/json")
+        |> Plug.Conn.resp(200, Jason.encode!(%{data: "upstream request timeout"}))
+      end)
+
+      assert {:error, :timeout} == SMTClient.request_odr("token", "esiid", "mn")
+    end
   end
 end

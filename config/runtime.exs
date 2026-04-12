@@ -16,8 +16,6 @@ config :smt_influx_sync,
   influx_token: System.get_env("INFLUX_TOKEN", "dummy"),
   influx_org: System.get_env("INFLUX_ORG", "dummy"),
   influx_bucket: System.get_env("INFLUX_BUCKET", "dummy"),
-  # Default: 30 minutes (SMT rate limit: 2 reads/hour, 24/day)
-  sync_interval_ms: String.to_integer(System.get_env("SYNC_INTERVAL_MS", "1800000")),
   poll_interval_ms: 5_000,
   poll_max_attempts: 24,
   smt_request_timeout_ms: String.to_integer(System.get_env("SMT_REQUEST_TIMEOUT_MS", "120000")),
