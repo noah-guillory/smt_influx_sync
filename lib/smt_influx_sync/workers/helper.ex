@@ -9,20 +9,36 @@ defmodule SmtInfluxSync.Workers.Helper do
   Returns the start date for a sync window.
   """
   def last_sync_start(source, today) do
-    floor = Date.add(today, -730)
+    lookback = Config.initial_lookback_days()
+    floor = Date.add(today, -lookback)
+    path = Config.last_sync_path(source)
 
-    case File.read(Config.last_sync_path(source)) do
+    case File.read(path) do
       {:ok, contents} ->
         case Date.from_iso8601(String.trim(contents)) do
           {:ok, last_date} ->
+            # Overlap by 1 day so partially-available data from the previous sync end gets a retry.
             candidate = Date.add(last_date, -1)
-            if Date.compare(candidate, floor) == :lt, do: floor, else: candidate
+            
+            if Date.compare(candidate, floor) == :lt do
+              Logger.debug("[#{source}] Saved sync date #{last_date} is older than lookback (#{lookback} days), using floor")
+              floor
+            else
+              Logger.debug("[#{source}] Resuming from saved sync date #{last_date} (overlap 1 day)")
+              candidate
+            end
 
           _ ->
+            Logger.warning("[#{source}] Could not parse saved sync date from #{path}, using floor")
             floor
         end
 
-      {:error, _} ->
+      {:error, :enoent} ->
+        Logger.info("[#{source}] No sync marker found at #{path}, performing full initial sync (lookback #{lookback} days)")
+        floor
+
+      {:error, reason} ->
+        Logger.warning("[#{source}] Could not read sync marker from #{path} (#{inspect(reason)}), using floor")
         floor
     end
   end

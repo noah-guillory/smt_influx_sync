@@ -60,4 +60,6 @@ defmodule SmtInfluxSync.Config do
   def poll_max_attempts, do: Application.get_env(@app, :poll_max_attempts, 24)
 
   def timezone, do: Application.get_env(@app, :timezone, "America/Chicago")
+
+  def initial_lookback_days, do: Application.get_env(@app, :initial_lookback_days, 730)
 end

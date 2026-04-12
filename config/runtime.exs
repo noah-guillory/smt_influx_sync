@@ -42,4 +42,6 @@ config :smt_influx_sync,
     String.to_integer(System.get_env("DAILY_SYNC_INTERVAL_MS", "86400000")),
   monthly_sync_interval_ms:
     String.to_integer(System.get_env("MONTHLY_SYNC_INTERVAL_MS", "86400000")),
+  initial_lookback_days:
+    String.to_integer(System.get_env("INITIAL_LOOKBACK_DAYS", "730")),
   start_workers: config_env() != :test
