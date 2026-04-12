@@ -9,6 +9,10 @@ defmodule SmtInfluxSync.Application do
   def start(_type, _args) do
     children =
       [
+        SmtInfluxSync.ConfigManager,
+        {Phoenix.PubSub, name: SmtInfluxSync.PubSub},
+        SmtInfluxSyncWeb.Endpoint,
+        SmtInfluxSyncWeb.Telemetry,
         SmtInfluxSync.InfluxWriter
       ] ++
         if(Application.get_env(:smt_influx_sync, :start_workers, true),

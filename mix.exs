@@ -26,7 +26,14 @@ defmodule SmtInfluxSync.MixProject do
       {:jason, "~> 1.4"},
       {:tzdata, "~> 1.1"},
       {:dotenv, "~> 3.0.0", only: [:dev, :test]},
-      {:bypass, "~> 2.1", only: :test}
+      {:bypass, "~> 2.1", only: :test},
+      {:phoenix, "~> 1.7"},
+      {:phoenix_live_view, "~> 0.20"},
+      {:phoenix_html, "~> 4.0"},
+      {:phoenix_live_dashboard, "~> 0.8"},
+      {:phoenix_pubsub, "~> 2.1"},
+      {:telemetry_poller, "~> 1.0"},
+      {:bandit, "~> 1.0"}
     ]
   end
 end

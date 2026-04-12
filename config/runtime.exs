@@ -45,3 +45,24 @@ config :smt_influx_sync,
   initial_lookback_days:
     String.to_integer(System.get_env("INITIAL_LOOKBACK_DAYS", "730")),
   start_workers: config_env() != :test
+
+# Phoenix Endpoint configuration
+if config_env() != :test do
+  host = System.get_env("PHX_HOST") || "localhost"
+  port = String.to_integer(System.get_env("PORT") || "4000")
+
+  config :smt_influx_sync, SmtInfluxSyncWeb.Endpoint,
+    url: [host: host, port: port, scheme: "http"],
+    http: [
+      ip: {0, 0, 0, 0, 0, 0, 0, 0},
+      port: port
+    ],
+    secret_key_base:
+      System.get_env("SECRET_KEY_BASE") ||
+        "pW56m3P8C4eU9B/qD5gR6v7X9Y+Z/W8kL9M0N1P2Q3R4S5T6U7V8W9X0Y1Z2A3B4",
+    check_origin: [
+      "//#{host}",
+      "//localhost",
+      "//127.0.0.1"
+    ]
+end

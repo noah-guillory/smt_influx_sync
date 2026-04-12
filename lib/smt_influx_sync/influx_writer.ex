@@ -38,6 +38,10 @@ defmodule SmtInfluxSync.InfluxWriter do
     GenServer.call(__MODULE__, :pending_count)
   end
 
+  def get_status do
+    GenServer.call(__MODULE__, :get_status)
+  end
+
   # --- GenServer callbacks ---
 
   @impl true
@@ -51,7 +55,14 @@ defmodule SmtInfluxSync.InfluxWriter do
         if pending > 0, do: Logger.info("Loaded #{pending} pending write(s) from disk")
         send(self(), :flush)
         schedule_flush()
-        {:ok, %{table: table, healthy: true}}
+
+        {:ok,
+         %{
+           table: table,
+           healthy: true,
+           last_write_at: nil,
+           last_write_status: nil
+         }}
 
       {:error, reason} ->
         {:stop, {:dets_open_failed, reason}}
@@ -70,12 +81,12 @@ defmodule SmtInfluxSync.InfluxWriter do
     if state.healthy and dets_empty?(state.table) do
       case do_write(entry) do
         :ok ->
-          {:reply, :ok, state}
+          {:reply, :ok, update_state_success(state)}
 
         {:error, reason} ->
           Logger.warning("InfluxDB write failed (#{inspect(reason)}), queuing for retry")
           enqueue(state.table, entry)
-          {:reply, :ok, %{state | healthy: false}}
+          {:reply, :ok, update_state_fail(state, reason)}
       end
     else
       enqueue(state.table, entry)
@@ -89,8 +100,21 @@ defmodule SmtInfluxSync.InfluxWriter do
     {:reply, if(ok, do: :ok, else: {:error, :write_failed}), state}
   end
 
+  @impl true
   def handle_call(:pending_count, _from, state) do
     {:reply, :dets.info(state.table, :size), state}
+  end
+
+  @impl true
+  def handle_call(:get_status, _from, state) do
+    status = %{
+      healthy: state.healthy,
+      pending_count: :dets.info(state.table, :size),
+      last_write_at: state.last_write_at,
+      last_write_status: state.last_write_status
+    }
+
+    {:reply, status, state}
   end
 
   @impl true
@@ -101,6 +125,14 @@ defmodule SmtInfluxSync.InfluxWriter do
   end
 
   # --- Private ---
+
+  defp update_state_success(state) do
+    %{state | healthy: true, last_write_at: DateTime.utc_now(), last_write_status: :ok}
+  end
+
+  defp update_state_fail(state, reason) do
+    %{state | healthy: false, last_write_at: DateTime.utc_now(), last_write_status: {:error, reason}}
+  end
 
   defp flush_pending(%{table: table} = state) do
     # DETS traversal order is undefined.
@@ -133,14 +165,14 @@ defmodule SmtInfluxSync.InfluxWriter do
           case do_write_lines(body) do
             :ok ->
               Enum.each(chunk, fn {key, _entry} -> :dets.delete(table, key) end)
-              {acc_state, true}
+              {update_state_success(acc_state), true}
 
             {:error, reason} ->
               Logger.warning(
                 "InfluxDB still unhealthy during flush (#{inspect(reason)}), will retry in #{@retry_interval_ms}ms"
               )
 
-              {%{acc_state | healthy: false}, false}
+              {update_state_fail(acc_state, reason), false}
           end
         else
           {acc_state, false}
@@ -164,7 +196,7 @@ defmodule SmtInfluxSync.InfluxWriter do
 
         case do_write_lines(body) do
           :ok ->
-            {state, ok}
+            {update_state_success(state), ok}
 
           {:error, reason} ->
             Logger.warning(
@@ -172,7 +204,7 @@ defmodule SmtInfluxSync.InfluxWriter do
             )
 
             Enum.each(chunk, &enqueue(state.table, &1))
-            {%{state | healthy: false}, false}
+            {update_state_fail(state, reason), false}
         end
       end)
     else
