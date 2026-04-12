@@ -1,5 +1,5 @@
 defmodule SmtInfluxSync.YnabSyncWorkerTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias SmtInfluxSync.YnabSyncWorker
 
   setup do

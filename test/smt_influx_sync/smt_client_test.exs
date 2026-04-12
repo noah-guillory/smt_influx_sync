@@ -1,5 +1,5 @@
 defmodule SmtInfluxSync.SMTClientTest do
-  use ExUnit.Case, async: true
+  use ExUnit.Case, async: false
   alias SmtInfluxSync.SMTClient
 
   setup do

@@ -34,4 +34,12 @@ config :smt_influx_sync,
   kwh_rate: System.get_env("KWH_RATE", "0.1") |> String.to_float(),
   ynab_sync_interval_ms:
     String.to_integer(System.get_env("YNAB_SYNC_INTERVAL_MS", "#{86_400_000 * 30}")),
+  odr_sync_interval_ms:
+    String.to_integer(System.get_env("ODR_SYNC_INTERVAL_MS", "3600000")),
+  interval_sync_interval_ms:
+    String.to_integer(System.get_env("INTERVAL_SYNC_INTERVAL_MS", "3600000")),
+  daily_sync_interval_ms:
+    String.to_integer(System.get_env("DAILY_SYNC_INTERVAL_MS", "86400000")),
+  monthly_sync_interval_ms:
+    String.to_integer(System.get_env("MONTHLY_SYNC_INTERVAL_MS", "86400000")),
   start_workers: config_env() != :test

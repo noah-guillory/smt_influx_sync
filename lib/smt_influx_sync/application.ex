@@ -12,7 +12,10 @@ defmodule SmtInfluxSync.Application do
         SmtInfluxSync.InfluxWriter
       ] ++
         if(Application.get_env(:smt_influx_sync, :start_workers, true),
-          do: [SmtInfluxSync.Scheduler, SmtInfluxSync.YnabSyncWorker],
+          do: [
+            {SmtInfluxSync.SMT.Session, [name: SmtInfluxSync.SMT.Session]},
+            SmtInfluxSync.YnabSyncWorker
+          ],
           else: []
         )
 

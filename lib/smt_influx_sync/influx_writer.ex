@@ -103,29 +103,54 @@ defmodule SmtInfluxSync.InfluxWriter do
   # --- Private ---
 
   defp flush_pending(%{table: table} = state) do
-    # DETS traversal order is undefined — collect all entries and sort by key.
+    # DETS traversal order is undefined.
+    # Collect all entries, sort by key (timestamp), and process in chunks.
     entries =
       :dets.foldl(fn {k, v}, acc -> [{k, v} | acc] end, [], table)
       |> Enum.sort_by(fn {{_measurement, _tags, timestamp}, _} -> timestamp end)
 
-    do_flush_entries(entries, state)
+    if entries != [] do
+      Logger.info("Flushing #{length(entries)} pending write(s) from disk")
+      do_flush_chunks(entries, state)
+    else
+      %{state | healthy: true}
+    end
   end
 
-  defp do_flush_entries([], state), do: %{state | healthy: true}
+  defp do_flush_chunks([], state), do: %{state | healthy: true}
 
-  defp do_flush_entries([{key, entry} | rest], %{table: table} = state) do
-    case do_write_lines(build_line_from_entry(entry)) do
-      :ok ->
-        :dets.delete(table, key)
-        remaining = :dets.info(table, :size)
-        Logger.info("Flushed pending write, #{remaining} remaining")
-        do_flush_entries(rest, %{state | healthy: true})
+  defp do_flush_chunks(entries, %{table: table} = state) do
+    # Process in chunks to leverage write_batch logic
+    {new_state, all_ok} =
+      entries
+      |> Enum.chunk_every(@batch_size)
+      |> Enum.reduce({state, true}, fn chunk, {acc_state, ok_so_far} ->
+        if ok_so_far do
+          # Extract the actual data from {key, entry}
+          data_entries = Enum.map(chunk, fn {_key, entry} -> entry end)
+          body = data_entries |> Enum.map(&build_line_from_entry/1) |> Enum.join("\n")
 
-      {:error, reason} ->
-        Logger.warning(
-          "InfluxDB still unhealthy (#{inspect(reason)}), will retry in #{@retry_interval_ms}ms"
-        )
-        %{state | healthy: false}
+          case do_write_lines(body) do
+            :ok ->
+              Enum.each(chunk, fn {key, _entry} -> :dets.delete(table, key) end)
+              {acc_state, true}
+
+            {:error, reason} ->
+              Logger.warning(
+                "InfluxDB still unhealthy during flush (#{inspect(reason)}), will retry in #{@retry_interval_ms}ms"
+              )
+
+              {%{acc_state | healthy: false}, false}
+          end
+        else
+          {acc_state, false}
+        end
+      end)
+
+    if all_ok do
+      %{new_state | healthy: true}
+    else
+      new_state
     end
   end
 

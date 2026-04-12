@@ -51,7 +51,11 @@ defmodule SmtInfluxSync.Config do
 
   def smt_request_timeout_ms, do: Application.get_env(@app, :smt_request_timeout_ms, 120_000)
 
-  def sync_interval_ms, do: 3_600_000
+  def odr_sync_interval_ms, do: Application.get_env(@app, :odr_sync_interval_ms, 3_600_000)
+  def interval_sync_interval_ms, do: Application.get_env(@app, :interval_sync_interval_ms, 3_600_000)
+  def daily_sync_interval_ms, do: Application.get_env(@app, :daily_sync_interval_ms, 86_400_000)
+  def monthly_sync_interval_ms, do: Application.get_env(@app, :monthly_sync_interval_ms, 86_400_000)
+
   def poll_interval_ms, do: Application.get_env(@app, :poll_interval_ms, 5_000)
   def poll_max_attempts, do: Application.get_env(@app, :poll_max_attempts, 24)
 

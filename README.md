@@ -30,9 +30,11 @@ INFLUX_BUCKET=your-bucket
 # Optional: Healthchecks.io ping URL for uptime monitoring (e.g. https://hc-ping.com/<uuid>)
 # HEALTHCHECKS_PING_URL=
 
-# Optional: sync interval in milliseconds (default: 1800000 = 30 minutes)
-# SMT enforces a rate limit of 2 reads/hour and 24 reads/day.
-# SYNC_INTERVAL_MS=1800000
+# Optional: sync intervals in milliseconds (defaults: ODR/Interval=1h, Daily/Monthly=24h)
+# ODR_SYNC_INTERVAL_MS=3600000
+# INTERVAL_SYNC_INTERVAL_MS=3600000
+# DAILY_SYNC_INTERVAL_MS=86400000
+# MONTHLY_SYNC_INTERVAL_MS=86400000
 
 # Optional: HTTP timeout for SMT API requests in milliseconds (default: 120000 = 2 minutes)
 # Interval data fetches over a 24-month window can be slow.
