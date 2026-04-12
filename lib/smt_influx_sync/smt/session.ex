@@ -70,6 +70,7 @@ defmodule SmtInfluxSync.SMT.Session do
 
     @impl true
     def handle_call(:get_credentials, _from, %{resolved: true} = state) do
+      Logger.metadata(esiid: state.esiid)
       {:reply, {:ok, %{token: state.token, esiid: state.esiid, meter_number: state.meter_number}},
        state}
     end
@@ -80,14 +81,15 @@ defmodule SmtInfluxSync.SMT.Session do
 
     @impl true
     def handle_call(:refresh_token, _from, state) do
-      Logger.info("[session] Refreshing SMT token")
+      Logger.metadata(esiid: state.esiid)
+      Logger.info("Refreshing SMT token")
 
       case authenticate_and_save() do
         {:ok, token} ->
           {:reply, :ok, %{state | token: token}}
 
         {:error, reason} ->
-          Logger.error("[session] Token refresh failed: #{inspect(reason)}")
+          Logger.error("Token refresh failed: #{inspect(reason)}")
           {:reply, {:error, reason}, state}
       end
     end
@@ -96,14 +98,15 @@ defmodule SmtInfluxSync.SMT.Session do
     def handle_info(:setup, state) do
       case setup() do
         {:ok, new_state} ->
+          Logger.metadata(esiid: new_state.esiid)
           Logger.info(
-            "[session] Ready — ESIID=#{new_state.esiid} MeterNumber=#{new_state.meter_number}"
+            "Ready — ESIID=#{new_state.esiid} MeterNumber=#{new_state.meter_number}"
           )
 
           {:noreply, Map.put(new_state, :resolved, true)}
 
         {:error, reason} ->
-          Logger.error("[session] Setup failed: #{inspect(reason)}. Retrying in 1 minute...")
+          Logger.error("Setup failed: #{inspect(reason)}. Retrying in 1 minute...")
           Process.send_after(self(), :setup, 60_000)
           {:noreply, state}
       end

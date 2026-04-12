@@ -24,34 +24,35 @@ defmodule SmtInfluxSync.Workers.ODR do
   def handle_info(:sync, state) do
     case Session.get_credentials() do
       {:ok, credentials} ->
-        Logger.info("[odr] Starting sync")
+        Logger.metadata(worker: :odr, esiid: credentials.esiid)
+        Logger.info("Starting sync")
         Helper.ping_healthcheck(:start, Config.healthchecks_ping_url())
         started_at = System.monotonic_time(:millisecond)
 
         case do_sync(credentials) do
           :ok ->
             elapsed = System.monotonic_time(:millisecond) - started_at
-            Logger.info("[odr] Sync completed successfully in #{elapsed}ms")
+            Logger.info("Sync completed successfully in #{elapsed}ms")
             Helper.ping_healthcheck(:success, Config.healthchecks_ping_url())
             schedule_sync()
 
           {:error, :rate_limited} ->
-            Logger.warning("[odr] Rate limited, retrying later")
+            Logger.warning("Rate limited, retrying later")
             schedule_sync()
 
           {:error, :daily_limit_reached} ->
-            Logger.warning("[odr] Daily limit reached, retrying tomorrow")
+            Logger.warning("Daily limit reached, retrying tomorrow")
             # Schedule for roughly next day or just stick to interval
             schedule_sync()
 
           {:error, reason} ->
-            Logger.error("[odr] Sync failed: #{inspect(reason)}")
+            Logger.error("Sync failed: #{inspect(reason)}")
             Helper.ping_healthcheck(:fail, Config.healthchecks_ping_url())
             schedule_sync()
         end
 
       {:error, :not_ready} ->
-        Logger.debug("[odr] Session not ready, retrying in 10s")
+        Logger.debug("Session not ready, retrying in 10s")
         schedule_sync(10_000)
     end
 

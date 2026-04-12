@@ -24,13 +24,14 @@ defmodule SmtInfluxSync.Workers.Interval do
   def handle_info(:sync, state) do
     case Session.get_credentials() do
       {:ok, credentials} ->
-        Logger.info("[interval] Starting sync")
+        Logger.metadata(worker: :interval, esiid: credentials.esiid)
+        Logger.info("Starting sync")
         started_at = System.monotonic_time(:millisecond)
 
         case do_sync(credentials) do
           :ok ->
             elapsed = System.monotonic_time(:millisecond) - started_at
-            Logger.info("[interval] Sync completed successfully in #{elapsed}ms")
+            Logger.info("Sync completed successfully in #{elapsed}ms")
             schedule_sync()
 
           {:error, :unauthorized} ->
@@ -38,12 +39,12 @@ defmodule SmtInfluxSync.Workers.Interval do
             schedule_sync(5000)
 
           {:error, reason} ->
-            Logger.error("[interval] Sync failed: #{inspect(reason)}")
+            Logger.error("Sync failed: #{inspect(reason)}")
             schedule_sync()
         end
 
       {:error, :not_ready} ->
-        Logger.debug("[interval] Session not ready, retrying in 10s")
+        Logger.debug("Session not ready, retrying in 10s")
         schedule_sync(10_000)
     end
 
