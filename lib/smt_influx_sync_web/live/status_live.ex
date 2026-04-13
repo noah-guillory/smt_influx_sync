@@ -1,7 +1,6 @@
 defmodule SmtInfluxSyncWeb.StatusLive do
   use SmtInfluxSyncWeb, :live_view
   alias SmtInfluxSync.Config
-  alias SmtInfluxSync.ConfigManager
 
   @impl true
   def mount(_params, _session, socket) do
@@ -35,24 +34,30 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   end
 
   @impl true
-  def handle_event("save_config", params, socket) do
-    # Filter out empty strings or handle conversions as needed
-    updates =
-      params
-      |> Map.take([
-        "smt_username", "smt_password", "smt_esiid", "smt_meter_number",
-        "influx_url", "influx_token", "influx_org", "influx_bucket",
-        "ynab_access_token", "ynab_budget_id", "ynab_category_id", "kwh_rate",
-        "odr_sync_time", "interval_sync_time", "daily_sync_time", "monthly_sync_time", "ynab_sync_time"
-      ])
-      |> Map.new(fn {k, v} -> {String.to_atom(k), parse_value(k, v)} end)
+  def handle_event("historical_sync", %{"source" => source, "start_date" => start_date, "end_date" => end_date}, socket) do
+    if Application.get_env(:smt_influx_sync, :oban_enabled, true) do
+      worker =
+        case source do
+          "daily" -> SmtInfluxSync.Workers.Daily
+          "interval" -> SmtInfluxSync.Workers.Interval
+          "monthly" -> SmtInfluxSync.Workers.Monthly
+        end
 
-    ConfigManager.update_config(updates)
-    {:noreply, socket |> put_flash(:info, "Configuration updated!") |> assign_data()}
+      %{"start_date" => start_date, "end_date" => end_date}
+      |> worker.new()
+      |> Oban.insert!()
+
+      {:noreply, socket |> put_flash(:info, "Historical sync triggered for #{source} from #{start_date} to #{end_date}!")}
+    else
+      {:noreply, socket |> put_flash(:error, "Oban is disabled, cannot trigger sync.")}
+    end
   end
 
-  defp parse_value("kwh_rate", v), do: String.to_float(v)
-  defp parse_value(_, v), do: v
+  @impl true
+  def handle_event("toggle_meter", %{"id" => id}, socket) do
+    SmtInfluxSync.Meter.toggle_active(id)
+    {:noreply, assign_data(socket)}
+  end
 
   defp format_dt(nil), do: "Never"
   defp format_dt(%NaiveDateTime{} = ndt) do
@@ -83,25 +88,7 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       sync_status: fetch_sync_status(),
       influx_status: SmtInfluxSync.InfluxWriter.get_status(),
       recent_logs: SmtInfluxSync.SyncMetadata.list_recent_logs(10),
-      config: %{
-        smt_username: Config.smt_username(),
-        smt_password: Config.smt_password(),
-        smt_esiid: Config.smt_esiid(),
-        smt_meter_number: Config.smt_meter_number(),
-        influx_url: Config.influx_url(),
-        influx_token: Config.influx_token(),
-        influx_org: Config.influx_org(),
-        influx_bucket: Config.influx_bucket(),
-        ynab_access_token: Config.ynab_access_token(),
-        ynab_budget_id: Config.ynab_budget_id(),
-        ynab_category_id: Config.ynab_category_id(),
-        kwh_rate: Config.kwh_rate(),
-        odr_sync_time: Config.odr_sync_time(),
-        interval_sync_time: Config.interval_sync_time(),
-        daily_sync_time: Config.daily_sync_time(),
-        monthly_sync_time: Config.monthly_sync_time(),
-        ynab_sync_time: Config.ynab_sync_time()
-      }
+      meters: SmtInfluxSync.Meter.list_all()
     )
   end
 
@@ -254,102 +241,84 @@ defmodule SmtInfluxSyncWeb.StatusLive do
         </div>
       </div>
 
-      <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200">
-        <h2 class="text-2xl font-semibold mb-6 text-slate-700">Configuration</h2>
-        <form phx-submit="save_config" class="space-y-6">
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">SMT Username</label>
-              <input type="text" name="smt_username" value={@config.smt_username} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+      <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 mb-12">
+        <h2 class="text-2xl font-semibold mb-6 text-slate-700">Gap Filler (Historical Sync)</h2>
+        <p class="text-slate-500 mb-6 text-sm">
+          Trigger a manual sync for a specific date range. Useful for filling in missing data if the service was down.
+        </p>
+        <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+          <%= for source <- ~w(interval daily monthly) do %>
+            <div class="p-4 bg-slate-50 rounded-lg border border-slate-100">
+              <h3 class="font-semibold text-slate-700 capitalize mb-3"><%= source %> Sync</h3>
+              <form phx-submit="historical_sync" class="space-y-3">
+                <input type="hidden" name="source" value={source} />
+                <div>
+                  <label class="block text-xs font-medium text-slate-500 mb-1">Start Date</label>
+                  <input type="date" name="start_date" required class="w-full text-sm rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                </div>
+                <div>
+                  <label class="block text-xs font-medium text-slate-500 mb-1">End Date</label>
+                  <input type="date" name="end_date" required class="w-full text-sm rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                </div>
+                <button type="submit" class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded transition shadow-sm">
+                  Run Historical Sync
+                </button>
+              </form>
             </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">SMT Password</label>
-              <input type="password" name="smt_password" value={@config.smt_password} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">ESIID</label>
-              <input type="text" name="smt_esiid" value={@config.smt_esiid} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">Meter Number</label>
-              <input type="text" name="smt_meter_number" value={@config.smt_meter_number} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-          </div>
+          <% end %>
+        </div>
+      </div>
 
-          <hr class="border-slate-100" />
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">InfluxDB URL</label>
-              <input type="text" name="influx_url" value={@config.influx_url} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">InfluxDB Org</label>
-              <input type="text" name="influx_org" value={@config.influx_org} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">InfluxDB Bucket</label>
-              <input type="text" name="influx_bucket" value={@config.influx_bucket} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">InfluxDB Token</label>
-              <input type="password" name="influx_token" value={@config.influx_token} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-          </div>
-
-          <hr class="border-slate-100" />
-
-          <div class="grid grid-cols-1 md:grid-cols-2 gap-6">
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">YNAB Access Token</label>
-              <input type="password" name="ynab_access_token" value={@config.ynab_access_token} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">YNAB Budget ID</label>
-              <input type="text" name="ynab_budget_id" value={@config.ynab_budget_id} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">YNAB Category ID</label>
-              <input type="text" name="ynab_category_id" value={@config.ynab_category_id} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">kWh Rate ($)</label>
-              <input type="text" name="kwh_rate" value={@config.kwh_rate} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-          </div>
-
-          <hr class="border-slate-100" />
-
-          <h3 class="text-lg font-medium text-slate-700 mb-4">Scheduled Sync Times (HH:MM)</h3>
-          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">ODR Sync Time</label>
-              <input type="text" name="odr_sync_time" value={@config.odr_sync_time} placeholder="02:00" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">Interval Sync Time</label>
-              <input type="text" name="interval_sync_time" value={@config.interval_sync_time} placeholder="02:30" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">Daily Sync Time</label>
-              <input type="text" name="daily_sync_time" value={@config.daily_sync_time} placeholder="02:45" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">Monthly Sync Time</label>
-              <input type="text" name="monthly_sync_time" value={@config.monthly_sync_time} placeholder="03:15" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-            <div>
-              <label class="block text-sm font-medium text-slate-700 mb-1">YNAB Sync Time</label>
-              <input type="text" name="ynab_sync_time" value={@config.ynab_sync_time} placeholder="03:00" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
-            </div>
-          </div>
-
-          <div class="pt-4">
-            <button type="submit" class="w-full md:w-auto px-8 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold rounded-lg shadow-sm transition">
-              Save Configuration
-            </button>
-          </div>
-        </form>
+      <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 mb-12">
+        <h2 class="text-2xl font-semibold mb-6 text-slate-700">Meter Management</h2>
+        <div class="overflow-x-auto">
+          <table class="w-full text-left">
+            <thead>
+              <tr class="text-slate-500 border-b border-slate-100">
+                <th class="pb-3 font-medium">Meter</th>
+                <th class="pb-3 font-medium">ESIID</th>
+                <th class="pb-3 font-medium">Status</th>
+                <th class="pb-3 font-medium">Action</th>
+              </tr>
+            </thead>
+            <tbody class="divide-y divide-slate-50">
+              <%= for meter <- @meters do %>
+                <tr>
+                  <td class="py-3">
+                    <div class="font-medium text-slate-700"><%= meter.label || "Unnamed Meter" %></div>
+                    <div class="text-xs text-slate-400 font-mono"><%= meter.meter_number %></div>
+                  </td>
+                  <td class="py-3 font-mono text-xs text-slate-600"><%= meter.esiid %></td>
+                  <td class="py-3">
+                    <span class={[
+                      "px-2 py-1 rounded-full text-xs font-semibold",
+                      meter.is_active && "bg-green-100 text-green-700",
+                      !meter.is_active && "bg-slate-100 text-slate-700"
+                    ]}>
+                      <%= if meter.is_active, do: "Active", else: "Inactive" %>
+                    </span>
+                  </td>
+                  <td class="py-3">
+                    <button
+                      phx-click="toggle_meter"
+                      phx-value-id={meter.id}
+                      class={[
+                        "text-xs px-3 py-1 font-semibold rounded transition",
+                        meter.is_active && "bg-red-50 hover:bg-red-100 text-red-600",
+                        !meter.is_active && "bg-green-50 hover:bg-green-100 text-green-600"
+                      ]}
+                    >
+                      <%= if meter.is_active, do: "Deactivate", else: "Activate" %>
+                    </button>
+                  </td>
+                </tr>
+              <% end %>
+            </tbody>
+          </table>
+        </div>
+        <p class="mt-4 text-xs text-slate-400 italic">
+          Meters are automatically discovered during session setup based on your SMT ESIID configuration.
+        </p>
       </div>
     </div>
     """

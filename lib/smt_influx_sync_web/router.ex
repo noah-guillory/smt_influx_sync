@@ -16,6 +16,7 @@ defmodule SmtInfluxSyncWeb.Router do
     pipe_through :browser
 
     live "/", StatusLive, :index
+    live "/settings", SettingsLive, :index
     live_dashboard "/dashboard", metrics: SmtInfluxSyncWeb.Telemetry
   end
 end
