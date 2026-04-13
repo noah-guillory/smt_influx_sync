@@ -1,73 +1,66 @@
 defmodule SmtInfluxSync.Workers.ODR do
   @moduledoc """
-  Worker for On-Demand Read (ODR) sync.
+  Oban worker for On-Demand Read (ODR) sync.
   """
-  use GenServer
+  use Oban.Worker, queue: :default, max_attempts: 3
   require Logger
 
   alias SmtInfluxSync.{Config, SMTClient, InfluxWriter}
   alias SmtInfluxSync.SMT.Session
   alias SmtInfluxSync.Workers.Helper
 
-  def start_link(_opts) do
-    GenServer.start_link(__MODULE__, [], name: __MODULE__)
-  end
-
-  @impl true
-  def init([]) do
-    Logger.info("[odr] Starting ODR worker")
-    
-    if SmtInfluxSync.SyncMetadata.needs_initial_sync?("odr", 1) do
-      schedule_sync(0)
-    else
-      schedule_sync()
-    end
-
-    {:ok, %{}}
-  end
-
-  @impl true
-  def handle_info(:sync, state) do
+  @impl Oban.Worker
+  def perform(%Oban.Job{}) do
     case Session.get_credentials() do
       {:ok, credentials} ->
         Logger.metadata(worker: :odr, esiid: credentials.esiid)
-        Logger.info("Starting sync")
+        Logger.info("[odr] Starting sync")
         sync_log = SmtInfluxSync.SyncMetadata.log_start("odr")
         started_at = System.monotonic_time(:millisecond)
 
         case do_sync(credentials) do
           :ok ->
             elapsed = System.monotonic_time(:millisecond) - started_at
-            Logger.info("Sync completed successfully in #{elapsed}ms")
+            Logger.info("[odr] Sync completed successfully in #{elapsed}ms")
             Helper.save_last_sync_now("odr")
             SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms")
             Helper.ping_healthcheck(:success, Config.healthchecks_ping_url())
-            schedule_sync()
+            schedule_next()
+            :ok
 
           {:error, :rate_limited} ->
-            Logger.warning("Rate limited, retrying later")
+            Logger.warning("[odr] Rate limited, retrying later")
             SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Rate limited")
-            schedule_sync()
+            schedule_next()
+            {:error, :rate_limited}
 
           {:error, :daily_limit_reached} ->
-            Logger.warning("Daily limit reached, retrying tomorrow")
+            Logger.warning("[odr] Daily limit reached, retrying tomorrow")
             SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Daily limit reached")
-            # Schedule for roughly next day or just stick to interval
-            schedule_sync()
+            schedule_next()
+            :ok # Don't retry, just wait for next day
 
           {:error, reason} ->
-            Logger.error("Sync failed: #{inspect(reason)}")
+            Logger.error("[odr] Sync failed: #{inspect(reason)}")
             SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Sync failed: #{inspect(reason)}")
             Helper.ping_healthcheck(:fail, Config.healthchecks_ping_url())
-            schedule_sync()
+            schedule_next()
+            {:error, reason}
         end
 
       {:error, :not_ready} ->
-        Logger.debug("Session not ready, retrying in 10s")
-        schedule_sync(10_000)
+        Logger.debug("[odr] Session not ready, retrying in 1 minute")
+        {:error, :not_ready}
     end
+  end
 
-    {:noreply, state}
+  def schedule_next do
+    {h, m} = Config.parse_time_string(Config.odr_sync_time())
+    ms = Helper.ms_until_next_time(h, m)
+    
+    %{}
+    |> __MODULE__.new(scheduled_at: DateTime.add(DateTime.utc_now(), ms, :millisecond))
+    |> Oban.insert!()
   end
 
   # --- Private ---
@@ -164,17 +157,5 @@ defmodule SmtInfluxSync.Workers.ODR do
     path = Config.odr_daily_count_path()
     path |> Path.dirname() |> File.mkdir_p!()
     File.write(path, "#{today}\n#{count}")
-  end
-
-  defp schedule_sync(interval \\ nil) do
-    ms =
-      if interval do
-        interval
-      else
-        {h, m} = Config.parse_time_string(Config.odr_sync_time())
-        Helper.ms_until_next_time(h, m)
-      end
-
-    Process.send_after(self(), :sync, ms)
   end
 end

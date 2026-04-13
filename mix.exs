@@ -35,7 +35,8 @@ defmodule SmtInfluxSync.MixProject do
       {:telemetry_poller, "~> 1.0"},
       {:bandit, "~> 1.0"},
       {:ecto_sqlite3, "~> 0.17"},
-      {:ecto, "~> 3.12"}
+      {:ecto, "~> 3.12"},
+      {:oban, "~> 2.19"}
     ]
   end
 end

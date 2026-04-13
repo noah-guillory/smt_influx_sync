@@ -11,11 +11,7 @@ defmodule SmtInfluxSync.SMT.Session do
   @impl true
   def init(:ok) do
     children = [
-      {SmtInfluxSync.SMT.Session.Manager, [name: SmtInfluxSync.SMT.Session.Manager]},
-      SmtInfluxSync.Workers.ODR,
-      SmtInfluxSync.Workers.Interval,
-      SmtInfluxSync.Workers.Daily,
-      SmtInfluxSync.Workers.Monthly
+      {SmtInfluxSync.SMT.Session.Manager, [name: SmtInfluxSync.SMT.Session.Manager]}
     ]
 
     # :rest_for_one means if Session.Manager crashes, all workers are restarted.

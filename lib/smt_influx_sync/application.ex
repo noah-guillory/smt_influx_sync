@@ -15,16 +15,21 @@ defmodule SmtInfluxSync.Application do
     children =
       [
         SmtInfluxSync.Repo,
-        SmtInfluxSync.ConfigManager,
-        {Phoenix.PubSub, name: SmtInfluxSync.PubSub},
-        SmtInfluxSyncWeb.Endpoint,
-        SmtInfluxSyncWeb.Telemetry,
-        SmtInfluxSync.InfluxWriter
+        SmtInfluxSync.ConfigManager
       ] ++
+        (if Application.get_env(:smt_influx_sync, :oban_enabled, true),
+          do: [{Oban, Application.fetch_env!(:smt_influx_sync, Oban)}],
+          else: []
+        ) ++
+        [
+          {Phoenix.PubSub, name: SmtInfluxSync.PubSub},
+          SmtInfluxSyncWeb.Endpoint,
+          SmtInfluxSyncWeb.Telemetry,
+          SmtInfluxSync.InfluxWriter
+        ] ++
         if(Application.get_env(:smt_influx_sync, :start_workers, true),
           do: [
-            {SmtInfluxSync.SMT.Session, [name: SmtInfluxSync.SMT.Session]},
-            SmtInfluxSync.YnabSyncWorker
+            {SmtInfluxSync.SMT.Session, [name: SmtInfluxSync.SMT.Session]}
           ],
           else: []
         )
@@ -32,13 +37,41 @@ defmodule SmtInfluxSync.Application do
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: SmtInfluxSync.Supervisor]
-    Supervisor.start_link(children, opts)
+    
+    case Supervisor.start_link(children, opts) do
+      {:ok, pid} ->
+        # Run initial job enqueueing after start
+        if Application.get_env(:smt_influx_sync, :oban_enabled, true) do
+          enqueue_initial_jobs()
+        end
+
+        {:ok, pid}
+      other -> other
+    end
   end
 
   defp startup_tasks do
     Ecto.Migrator.with_repo(SmtInfluxSync.Repo, fn _repo ->
       Ecto.Migrator.run(SmtInfluxSync.Repo, :up, all: true)
       migrate_files_to_db()
+    end)
+  end
+
+  defp enqueue_initial_jobs do
+    jobs = [
+      {"daily", SmtInfluxSync.Workers.Daily, 24},
+      {"interval", SmtInfluxSync.Workers.Interval, 1},
+      {"monthly", SmtInfluxSync.Workers.Monthly, 24},
+      {"odr", SmtInfluxSync.Workers.ODR, 1},
+      {"ynab", SmtInfluxSync.YnabSyncWorker, 24}
+    ]
+
+    Enum.each(jobs, fn {source, worker, max_age} ->
+      if SmtInfluxSync.SyncMetadata.needs_initial_sync?(source, max_age) do
+        %{} |> worker.new() |> Oban.insert!()
+      else
+        worker.schedule_next()
+      end
     end)
   end
 

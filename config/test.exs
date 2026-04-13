@@ -8,4 +8,5 @@ config :smt_influx_sync, SmtInfluxSync.Repo,
 config :smt_influx_sync,
   run_migrations: true,
   start_workers: false,
+  oban_enabled: false,
   data_dir: "/tmp/smt_influx_sync_test_data"

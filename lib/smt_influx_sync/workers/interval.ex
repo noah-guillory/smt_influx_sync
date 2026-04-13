@@ -1,64 +1,56 @@
 defmodule SmtInfluxSync.Workers.Interval do
   @moduledoc """
-  Worker for historical interval data sync.
+  Oban worker for historical interval data sync.
   """
-  use GenServer
+  use Oban.Worker, queue: :default, max_attempts: 3
   require Logger
 
   alias SmtInfluxSync.{Config, SMTClient}
   alias SmtInfluxSync.SMT.Session
   alias SmtInfluxSync.Workers.Helper
 
-  def start_link(_opts) do
-    GenServer.start_link(__MODULE__, [], name: __MODULE__)
-  end
-
-  @impl true
-  def init([]) do
-    Logger.info("[interval] Starting interval sync worker")
-    
-    if SmtInfluxSync.SyncMetadata.needs_initial_sync?("interval", 1) do
-      schedule_sync(0)
-    else
-      schedule_sync()
-    end
-
-    {:ok, %{}}
-  end
-
-  @impl true
-  def handle_info(:sync, state) do
+  @impl Oban.Worker
+  def perform(%Oban.Job{}) do
     case Session.get_credentials() do
       {:ok, credentials} ->
         Logger.metadata(worker: :interval, esiid: credentials.esiid)
-        Logger.info("Starting sync")
+        Logger.info("[interval] Starting sync")
         sync_log = SmtInfluxSync.SyncMetadata.log_start("interval")
         started_at = System.monotonic_time(:millisecond)
 
         case do_sync(credentials) do
           :ok ->
             elapsed = System.monotonic_time(:millisecond) - started_at
-            Logger.info("Sync completed successfully in #{elapsed}ms")
+            Logger.info("[interval] Sync completed successfully in #{elapsed}ms")
             SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms")
-            schedule_sync()
+            schedule_next()
+            :ok
 
           {:error, :unauthorized} ->
             Session.refresh_token()
             SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Unauthorized, token refreshed")
-            schedule_sync(5000)
+            {:error, :unauthorized}
 
           {:error, reason} ->
-            Logger.error("Sync failed: #{inspect(reason)}")
+            Logger.error("[interval] Sync failed: #{inspect(reason)}")
             SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Sync failed: #{inspect(reason)}")
-            schedule_sync()
+            schedule_next()
+            {:error, reason}
         end
 
       {:error, :not_ready} ->
-        Logger.debug("Session not ready, retrying in 10s")
-        schedule_sync(10_000)
+        Logger.debug("[interval] Session not ready, retrying in 1 minute")
+        {:error, :not_ready}
     end
+  end
 
-    {:noreply, state}
+  def schedule_next do
+    {h, m} = Config.parse_time_string(Config.interval_sync_time())
+    ms = Helper.ms_until_next_time(h, m)
+    
+    %{}
+    |> __MODULE__.new(scheduled_at: DateTime.add(DateTime.utc_now(), ms, :millisecond))
+    |> Oban.insert!()
   end
 
   # --- Private ---
@@ -83,17 +75,5 @@ defmodule SmtInfluxSync.Workers.Interval do
       {:error, :unauthorized} -> {:error, :unauthorized}
       {:error, reason} -> {:error, reason}
     end
-  end
-
-  defp schedule_sync(interval \\ nil) do
-    ms =
-      if interval do
-        interval
-      else
-        {h, m} = Config.parse_time_string(Config.interval_sync_time())
-        Helper.ms_until_next_time(h, m)
-      end
-
-    Process.send_after(self(), :sync, ms)
   end
 end

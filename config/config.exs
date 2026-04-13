@@ -22,4 +22,12 @@ config :smt_influx_sync, SmtInfluxSyncWeb.Endpoint,
 config :smt_influx_sync, SmtInfluxSync.PubSub,
   adapter: Phoenix.PubSub.PG2
 
+config :smt_influx_sync, Oban,
+  repo: SmtInfluxSync.Repo,
+  prefix: false,
+  notifier: Oban.Notifiers.Isolated,
+  peer: Oban.Peers.Isolated,
+  plugins: [Oban.Plugins.Pruner],
+  queues: [default: 10]
+
 import_config "#{config_env()}.exs"

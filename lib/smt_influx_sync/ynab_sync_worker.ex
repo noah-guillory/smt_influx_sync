@@ -1,47 +1,18 @@
 defmodule SmtInfluxSync.YnabSyncWorker do
-  use GenServer
+  @moduledoc """
+  Oban worker for YNAB budget target sync.
+  """
+  use Oban.Worker, queue: :default, max_attempts: 3
   require Logger
 
   alias SmtInfluxSync.Config
 
-  def start_link(_opts) do
-    GenServer.start_link(__MODULE__, [], name: __MODULE__)
-  end
-
-  @impl true
-  def init([]) do
-    Logger.info("[ynab] Worker starting")
-    
-    if SmtInfluxSync.SyncMetadata.needs_initial_sync?("ynab", 24) do
-      Process.send_after(self(), :sync, 0)
-    else
-      schedule_sync()
-    end
-
-    {:ok, %{}}
-  end
-
-  @impl true
-  def handle_info(:sync, state) do
-    Logger.info("[ynab] Sync triggered")
-    do_sync()
-    schedule_sync()
-    {:noreply, state}
-  end
-
-  # --- Private ---
-
-  defp schedule_sync do
-    {h, m} = Config.parse_time_string(Config.ynab_sync_time())
-    ms = SmtInfluxSync.Workers.Helper.ms_until_next_time(h, m)
-    Process.send_after(self(), :sync, ms)
-  end
-
-  defp do_sync do
-    started_at = System.monotonic_time(:millisecond)
+  @impl Oban.Worker
+  def perform(%Oban.Job{}) do
     Logger.info("[ynab] Starting sync")
     sync_log = SmtInfluxSync.SyncMetadata.log_start("ynab")
     ping_healthcheck(:start)
+    started_at = System.monotonic_time(:millisecond)
 
     with {:ok, average_kwh} <- fetch_trailing_average(),
          :ok <- update_ynab_target(average_kwh) do
@@ -50,14 +21,29 @@ defmodule SmtInfluxSync.YnabSyncWorker do
       SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed_ms}ms")
       SmtInfluxSync.Workers.Helper.save_last_sync_now("ynab")
       ping_healthcheck(:success)
+      schedule_next()
+      :ok
     else
       {:error, reason} ->
         elapsed_ms = System.monotonic_time(:millisecond) - started_at
         Logger.error("[ynab] Sync failed in #{elapsed_ms}ms: #{inspect(reason)}")
         SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Sync failed: #{inspect(reason)}")
         ping_healthcheck(:fail)
+        schedule_next()
+        {:error, reason}
     end
   end
+
+  def schedule_next do
+    {h, m} = Config.parse_time_string(Config.ynab_sync_time())
+    ms = SmtInfluxSync.Workers.Helper.ms_until_next_time(h, m)
+    
+    %{}
+    |> __MODULE__.new(scheduled_at: DateTime.add(DateTime.utc_now(), ms, :millisecond))
+    |> Oban.insert!()
+  end
+
+  # --- Private ---
 
   defp fetch_trailing_average do
     url = "#{Config.influx_url()}/api/v2/query?org=#{Config.influx_org()}"

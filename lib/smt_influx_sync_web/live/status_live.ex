@@ -17,17 +17,21 @@ defmodule SmtInfluxSyncWeb.StatusLive do
 
   @impl true
   def handle_event("force_sync", %{"source" => source}, socket) do
-    worker =
-      case source do
-        "daily" -> SmtInfluxSync.Workers.Daily
-        "interval" -> SmtInfluxSync.Workers.Interval
-        "monthly" -> SmtInfluxSync.Workers.Monthly
-        "odr" -> SmtInfluxSync.Workers.ODR
-        "ynab" -> SmtInfluxSync.YnabSyncWorker
-      end
+    if Application.get_env(:smt_influx_sync, :oban_enabled, true) do
+      worker =
+        case source do
+          "daily" -> SmtInfluxSync.Workers.Daily
+          "interval" -> SmtInfluxSync.Workers.Interval
+          "monthly" -> SmtInfluxSync.Workers.Monthly
+          "odr" -> SmtInfluxSync.Workers.ODR
+          "ynab" -> SmtInfluxSync.YnabSyncWorker
+        end
 
-    send(Process.whereis(worker), :sync)
-    {:noreply, socket |> put_flash(:info, "Sync triggered for #{source}!")}
+      %{} |> worker.new() |> Oban.insert!()
+      {:noreply, socket |> put_flash(:info, "Sync triggered for #{source}!")}
+    else
+      {:noreply, socket |> put_flash(:error, "Oban is disabled, cannot trigger sync.")}
+    end
   end
 
   @impl true
