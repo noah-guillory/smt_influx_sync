@@ -7,13 +7,17 @@ defmodule SmtInfluxSync.Meter do
     field :meter_number, :string
     field :is_active, :boolean, default: true
     field :label, :string
+    field :last_interval_at, :utc_datetime
+    field :last_daily_at, :utc_datetime
+    field :last_monthly_at, :utc_datetime
+    field :last_odr_at, :utc_datetime
 
     timestamps()
   end
 
   def changeset(meter, attrs) do
     meter
-    |> cast(attrs, [:esiid, :meter_number, :is_active, :label])
+    |> cast(attrs, [:esiid, :meter_number, :is_active, :label, :last_interval_at, :last_daily_at, :last_monthly_at, :last_odr_at])
     |> validate_required([:esiid, :meter_number])
     |> unique_constraint(:esiid)
   end
@@ -50,5 +54,26 @@ defmodule SmtInfluxSync.Meter do
     meter
     |> changeset(%{label: label})
     |> SmtInfluxSync.Repo.update()
+  end
+
+  def update_last_data_point(meter_id, source, timestamp) do
+    field =
+      case source do
+        "interval" -> :last_interval_at
+        "daily" -> :last_daily_at
+        "monthly" -> :last_monthly_at
+        "odr" -> :last_odr_at
+        _ -> nil
+      end
+
+    if field do
+      meter = SmtInfluxSync.Repo.get!(__MODULE__, meter_id)
+      dt = DateTime.from_unix!(timestamp)
+      meter
+      |> changeset(%{field => dt})
+      |> SmtInfluxSync.Repo.update()
+    else
+      {:error, :invalid_source}
+    end
   end
 end

@@ -9,6 +9,11 @@ defmodule SmtInfluxSync.SMT.SessionTest do
     Application.put_env(:smt_influx_sync, :token_path, "/tmp/smt_token_test")
     Application.put_env(:smt_influx_sync, :smt_esiid, "*")
     Application.put_env(:smt_influx_sync, :smt_meter_number, "MN1")
+
+    # DB ownership
+    :ok = Ecto.Adapters.SQL.Sandbox.checkout(SmtInfluxSync.Repo)
+    Ecto.Adapters.SQL.Sandbox.mode(SmtInfluxSync.Repo, {:shared, self()})
+
     # Clean up token path before each test
     File.rm("/tmp/smt_token_test")
     {:ok, bypass: bypass}

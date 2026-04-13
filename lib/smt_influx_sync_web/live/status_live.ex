@@ -98,13 +98,21 @@ defmodule SmtInfluxSyncWeb.StatusLive do
 
     ~w(daily interval monthly odr ynab)
     |> Enum.map(fn source ->
+      latest_log = SmtInfluxSync.SyncMetadata.get_latest_sync(source)
+      
       last_sync = 
-        case SmtInfluxSync.SyncMetadata.get_latest_sync(source) do
+        case latest_log do
           nil -> 
             path = Config.last_sync_path(source)
             if File.exists?(path), do: File.read!(path) |> String.trim(), else: "Never"
           log -> 
             format_dt(log.completed_at)
+        end
+
+      latest_data_point = 
+        case SmtInfluxSync.SyncMetadata.get_latest_data_point(source) do
+          nil -> "Never"
+          dt -> format_dt(dt)
         end
 
       time_str =
@@ -121,7 +129,7 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       next_sync_dt = DateTime.add(now, ms_until, :millisecond)
       next_sync = format_time(next_sync_dt)
 
-      %{source: source, last_sync: last_sync, next_sync: next_sync}
+      %{source: source, last_sync: last_sync, next_sync: next_sync, latest_data_point: latest_data_point}
     end)
   end
 
@@ -289,6 +297,12 @@ defmodule SmtInfluxSyncWeb.StatusLive do
                     <div class="text-xs text-slate-400 font-mono"><%= meter.meter_number %></div>
                   </td>
                   <td class="py-3 font-mono text-xs text-slate-600"><%= meter.esiid %></td>
+                  <td class="py-3">
+                    <div class="text-[10px] text-slate-400 uppercase">Interval</div>
+                    <div class="text-xs text-slate-700 mb-1"><%= format_dt(meter.last_interval_at) %></div>
+                    <div class="text-[10px] text-slate-400 uppercase">Daily</div>
+                    <div class="text-xs text-slate-700"><%= format_dt(meter.last_daily_at) %></div>
+                  </td>
                   <td class="py-3">
                     <span class={[
                       "px-2 py-1 rounded-full text-xs font-semibold",

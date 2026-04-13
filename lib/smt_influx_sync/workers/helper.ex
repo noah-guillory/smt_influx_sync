@@ -119,7 +119,14 @@ defmodule SmtInfluxSync.Workers.Helper do
         end
       end)
 
-    InfluxWriter.write_batch(entries) == :ok
+    max_ts = 
+      case entries do
+        [] -> nil
+        _ -> Enum.map(entries, fn {_, _, _, ts} -> ts end) |> Enum.max()
+      end
+
+    InfluxWriter.write_batch(entries)
+    {:ok, max_ts}
   end
 
   # --- Parsers ---

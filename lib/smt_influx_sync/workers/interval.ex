@@ -42,10 +42,13 @@ defmodule SmtInfluxSync.Workers.Interval do
               started_at = System.monotonic_time(:millisecond)
 
               case do_sync(token, meter, custom_range) do
-                :ok ->
+                {:ok, max_ts} ->
                   elapsed = System.monotonic_time(:millisecond) - started_at
                   Logger.info("[interval] Sync completed successfully in #{elapsed}ms")
-                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms")
+                  
+                  latest_dt = if max_ts, do: DateTime.from_unix!(max_ts), else: nil
+                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms", nil, latest_dt)
+                  if max_ts, do: SmtInfluxSync.Meter.update_last_data_point(meter.id, "interval", max_ts)
                   :ok
 
                 {:error, :unauthorized} ->
@@ -101,11 +104,10 @@ defmodule SmtInfluxSync.Workers.Interval do
     case SMTClient.get_interval_data(token, meter.esiid, start_date, end_date) do
       {:ok, records} ->
         Logger.info("[interval] Fetched #{length(records)} records")
-        if Helper.write_records("electricity_interval", tags, records, &Helper.parse_interval_record/1) do
-          unless custom_range, do: Helper.save_last_sync("interval", end_date)
-          :ok
-        else
-          {:error, :influx_write_failed}
+        case Helper.write_records("electricity_interval", tags, records, &Helper.parse_interval_record/1) do
+          {:ok, max_ts} ->
+            unless custom_range, do: Helper.save_last_sync("interval", end_date)
+            {:ok, max_ts}
         end
 
       {:error, :unauthorized} -> {:error, :unauthorized}

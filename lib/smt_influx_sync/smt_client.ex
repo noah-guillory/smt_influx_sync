@@ -3,14 +3,21 @@ defmodule SmtInfluxSync.SMTClient do
 
   alias SmtInfluxSync.Config
 
-  @user_agent "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/134.0.0.0 Safari/537.36"
+  @user_agent "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/147.0.0.0 Safari/537.36"
 
   @doc """
   Authenticates with Smart Meter Texas and returns a Bearer token.
   """
   def authenticate(username, password) do
     url = Config.smt_auth_url()
-    req_headers = [{"content-type", "application/json"}, {"user-agent", @user_agent}]
+    req_headers = [
+      {"content-type", "application/json"},
+      {"user-agent", @user_agent},
+      {"accept", "application/json, text/plain, */*"},
+      {"accept-language", "en-US,en;q=0.9"},
+      {"origin", "https://www.smartmetertexas.com"},
+      {"referer", "https://www.smartmetertexas.com/login/"}
+    ]
 
     Logger.debug(
       "SMT POST #{url}\n  req headers: #{inspect(req_headers)}\n  req body: %{username: \"#{username}\", password: \"[REDACTED]\", rememberMe: true}"
@@ -19,7 +26,7 @@ defmodule SmtInfluxSync.SMTClient do
     result =
       Req.post(url,
         json: %{username: username, password: password, rememberMe: true},
-        headers: [{"user-agent", @user_agent}],
+        headers: req_headers,
         redirect_trusted: true,
         retry: false
       )
@@ -47,7 +54,7 @@ defmodule SmtInfluxSync.SMTClient do
   Returns a list of maps with :esiid and :meter_number keys.
   """
   def get_meters(token, esiid \\ "*") do
-    case authed_post(token, "/meter", %{ESIID: esiid}) do
+    case authed_post(token, "/meter", %{esiid: esiid}) do
       {:ok, %{status: 200, body: %{"data" => meters}}} when is_list(meters) ->
         parsed =
           Enum.map(meters, fn m ->

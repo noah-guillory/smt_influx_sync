@@ -28,10 +28,13 @@ defmodule SmtInfluxSync.Workers.ODR do
               started_at = System.monotonic_time(:millisecond)
 
               case do_sync(token, meter) do
-                :ok ->
+                {:ok, timestamp} ->
                   elapsed = System.monotonic_time(:millisecond) - started_at
                   Logger.info("[odr] Sync completed successfully in #{elapsed}ms")
-                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms")
+                  
+                  latest_dt = if timestamp, do: DateTime.from_unix!(timestamp), else: nil
+                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms", nil, latest_dt)
+                  if timestamp, do: SmtInfluxSync.Meter.update_last_data_point(meter.id, "odr", timestamp)
                   :ok
 
                 {:error, :rate_limited} ->
@@ -59,11 +62,6 @@ defmodule SmtInfluxSync.Workers.ODR do
           if Enum.all?(results, &(&1 == :ok or &1 == :daily_limit_reached)) do
              Helper.save_last_sync_now("odr")
              Helper.ping_healthcheck(:success, Config.healthchecks_ping_url())
-          end
-
-          if Enum.any?(results, fn r -> match?({:error, _}, r) end) do
-             # Some failed, but we schedule next anyway to not block others
-             # If rate limited, we might want to back off.
           end
 
           schedule_next()
@@ -101,12 +99,15 @@ defmodule SmtInfluxSync.Workers.ODR do
             :error -> DateTime.to_unix(DateTime.utc_now())
           end
 
-        InfluxWriter.write(
+        case InfluxWriter.write(
           "electricity_usage",
           %{esiid: meter.esiid, meter_number: meter.meter_number, source: "odr"},
           %{value: reading.value, usage: reading.usage},
           timestamp
-        )
+        ) do
+          :ok -> {:ok, timestamp}
+          {:error, reason} -> {:error, reason}
+        end
 
       {:error, :unauthorized} -> {:error, :unauthorized}
       {:error, reason} -> {:error, reason}

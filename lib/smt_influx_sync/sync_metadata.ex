@@ -13,15 +13,26 @@ defmodule SmtInfluxSync.SyncMetadata do
     |> Repo.insert!()
   end
 
-  def log_success(log, message \\ nil, details \\ nil) do
+  def log_success(log, message \\ nil, details \\ nil, latest_data_point \\ nil) do
     log
     |> SyncLog.changeset(%{
       status: "success",
       completed_at: DateTime.utc_now(),
       message: message,
-      details: details
+      details: details,
+      latest_data_point: latest_data_point
     })
     |> Repo.update!()
+  end
+
+  def get_latest_data_point(source) do
+    SyncLog
+    |> where([l], l.source == ^source and l.status == "success")
+    |> where([l], not is_nil(l.latest_data_point))
+    |> order_by([l], desc: l.latest_data_point)
+    |> limit(1)
+    |> select([l], l.latest_data_point)
+    |> Repo.one()
   end
 
   def log_fail(log, message \\ nil, details \\ nil) do
