@@ -11,41 +11,68 @@ defmodule SmtInfluxSync.Workers.ODR do
 
   @impl Oban.Worker
   def perform(%Oban.Job{}) do
-    case Session.get_credentials() do
-      {:ok, credentials} ->
-        Logger.metadata(worker: :odr, esiid: credentials.esiid)
-        Logger.info("[odr] Starting sync")
-        sync_log = SmtInfluxSync.SyncMetadata.log_start("odr")
-        started_at = System.monotonic_time(:millisecond)
+    case Session.get_token() do
+      {:ok, token} ->
+        active_meters = SmtInfluxSync.Meter.list_active()
 
-        case do_sync(credentials) do
-          :ok ->
-            elapsed = System.monotonic_time(:millisecond) - started_at
-            Logger.info("[odr] Sync completed successfully in #{elapsed}ms")
-            Helper.save_last_sync_now("odr")
-            SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms")
-            Helper.ping_healthcheck(:success, Config.healthchecks_ping_url())
-            schedule_next()
+        if active_meters == [] do
+          Logger.warning("[odr] No active meters found, skipping sync")
+          schedule_next()
+          :ok
+        else
+          results = 
+            Enum.map(active_meters, fn meter ->
+              Logger.metadata(worker: :odr, esiid: meter.esiid)
+              Logger.info("[odr] Starting sync")
+              sync_log = SmtInfluxSync.SyncMetadata.log_start("odr", "ESIID: #{meter.esiid}")
+              started_at = System.monotonic_time(:millisecond)
+
+              case do_sync(token, meter) do
+                :ok ->
+                  elapsed = System.monotonic_time(:millisecond) - started_at
+                  Logger.info("[odr] Sync completed successfully in #{elapsed}ms")
+                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms")
+                  :ok
+
+                {:error, :rate_limited} ->
+                  Logger.warning("[odr] Rate limited, retrying later")
+                  SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Rate limited")
+                  {:error, :rate_limited}
+
+                {:error, :daily_limit_reached} ->
+                  Logger.warning("[odr] Daily limit reached, retrying tomorrow")
+                  SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Daily limit reached")
+                  :ok # Don't retry, just wait for next day
+
+                {:error, :unauthorized} ->
+                  Session.refresh_token()
+                  SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Unauthorized, token refreshed")
+                  {:error, :unauthorized}
+
+                {:error, reason} ->
+                  Logger.error("[odr] Sync failed: #{inspect(reason)}")
+                  SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Sync failed: #{inspect(reason)}")
+                  {:error, reason}
+              end
+            end)
+
+          if Enum.all?(results, &(&1 == :ok or &1 == :daily_limit_reached)) do
+             Helper.save_last_sync_now("odr")
+             Helper.ping_healthcheck(:success, Config.healthchecks_ping_url())
+          end
+
+          if Enum.any?(results, fn r -> match?({:error, _}, r) end) do
+             # Some failed, but we schedule next anyway to not block others
+             # If rate limited, we might want to back off.
+          end
+
+          schedule_next()
+          
+          if Enum.any?(results, &(&1 == {:error, :unauthorized})) do
+            {:error, :unauthorized}
+          else
             :ok
-
-          {:error, :rate_limited} ->
-            Logger.warning("[odr] Rate limited, retrying later")
-            SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Rate limited")
-            schedule_next()
-            {:error, :rate_limited}
-
-          {:error, :daily_limit_reached} ->
-            Logger.warning("[odr] Daily limit reached, retrying tomorrow")
-            SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Daily limit reached")
-            schedule_next()
-            :ok # Don't retry, just wait for next day
-
-          {:error, reason} ->
-            Logger.error("[odr] Sync failed: #{inspect(reason)}")
-            SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Sync failed: #{inspect(reason)}")
-            Helper.ping_healthcheck(:fail, Config.healthchecks_ping_url())
-            schedule_next()
-            {:error, reason}
+          end
         end
 
       {:error, :not_ready} ->
@@ -65,8 +92,8 @@ defmodule SmtInfluxSync.Workers.ODR do
 
   # --- Private ---
 
-  defp do_sync(credentials) do
-    case request_and_read(credentials) do
+  defp do_sync(token, meter) do
+    case request_and_read(token, meter) do
       {:ok, reading} ->
         timestamp =
           case SMTClient.parse_odr_date(reading.date) do
@@ -76,33 +103,29 @@ defmodule SmtInfluxSync.Workers.ODR do
 
         InfluxWriter.write(
           "electricity_usage",
-          %{esiid: credentials.esiid, meter_number: credentials.meter_number, source: "odr"},
+          %{esiid: meter.esiid, meter_number: meter.meter_number, source: "odr"},
           %{value: reading.value, usage: reading.usage},
           timestamp
         )
 
-      {:error, :unauthorized} ->
-        Session.refresh_token()
-        {:error, :unauthorized}
-
-      {:error, reason} ->
-        {:error, reason}
+      {:error, :unauthorized} -> {:error, :unauthorized}
+      {:error, reason} -> {:error, reason}
     end
   end
 
-  defp request_and_read(credentials) do
-    case check_recent_read(credentials) do
+  defp request_and_read(token, meter) do
+    case check_recent_read(token, meter) do
       {:reuse, reading} ->
         Logger.info("[odr] Reusing recent read from #{reading.date}")
         {:ok, reading}
 
       :stale ->
-        request_odr_and_read(credentials)
+        request_odr_and_read(token, meter)
     end
   end
 
-  defp check_recent_read(credentials) do
-    case SMTClient.get_latest_read(credentials.token, credentials.esiid) do
+  defp check_recent_read(token, meter) do
+    case SMTClient.get_latest_read(token, meter.esiid) do
       {:ok, :no_data} -> :stale
       {:ok, reading} ->
         # Use 1 hour as threshold for reusing recent reads
@@ -115,31 +138,31 @@ defmodule SmtInfluxSync.Workers.ODR do
     end
   end
 
-  defp request_odr_and_read(credentials) do
+  defp request_odr_and_read(token, meter) do
     limit = Config.odr_daily_limit()
-    count = odr_daily_count()
+    count = odr_daily_count(meter.esiid)
 
     if count >= limit do
       {:error, :daily_limit_reached}
     else
-      execute_odr_request(credentials)
+      execute_odr_request(token, meter)
     end
   end
 
-  defp execute_odr_request(credentials) do
-    case SMTClient.request_odr(credentials.token, credentials.esiid, credentials.meter_number) do
+  defp execute_odr_request(token, meter) do
+    case SMTClient.request_odr(token, meter.esiid, meter.meter_number) do
       :ok ->
-        increment_odr_daily_count()
-        SMTClient.poll_odr(credentials.token, credentials.esiid)
+        increment_odr_daily_count(meter.esiid)
+        SMTClient.poll_odr(token, meter.esiid)
 
       {:error, reason} ->
         {:error, reason}
     end
   end
 
-  defp odr_daily_count do
+  defp odr_daily_count(esiid) do
     today = Date.to_iso8601(Date.utc_today())
-    path = Config.odr_daily_count_path()
+    path = Config.odr_daily_count_path() <> "_#{esiid}"
 
     case File.read(path) do
       {:ok, contents} ->
@@ -151,10 +174,10 @@ defmodule SmtInfluxSync.Workers.ODR do
     end
   end
 
-  defp increment_odr_daily_count do
-    count = odr_daily_count() + 1
+  defp increment_odr_daily_count(esiid) do
+    count = odr_daily_count(esiid) + 1
     today = Date.to_iso8601(Date.utc_today())
-    path = Config.odr_daily_count_path()
+    path = Config.odr_daily_count_path() <> "_#{esiid}"
     path |> Path.dirname() |> File.mkdir_p!()
     File.write(path, "#{today}\n#{count}")
   end

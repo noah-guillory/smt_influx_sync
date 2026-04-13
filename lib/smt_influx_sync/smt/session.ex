@@ -20,6 +20,10 @@ defmodule SmtInfluxSync.SMT.Session do
 
   # --- Public API Delegation ---
 
+  def get_token do
+    SmtInfluxSync.SMT.Session.Manager.get_token()
+  end
+
   def get_credentials do
     SmtInfluxSync.SMT.Session.Manager.get_credentials()
   end
@@ -40,8 +44,6 @@ defmodule SmtInfluxSync.SMT.Session do
 
     @type state :: %{
             token: String.t() | nil,
-            esiid: String.t() | nil,
-            meter_number: String.t() | nil,
             resolved: boolean()
           }
 
@@ -49,7 +51,13 @@ defmodule SmtInfluxSync.SMT.Session do
       GenServer.start_link(__MODULE__, [], opts)
     end
 
+    def get_token(server \\ __MODULE__) do
+      GenServer.call(server, :get_token)
+    end
+
     def get_credentials(server \\ __MODULE__) do
+      # Backwards compatibility for single-meter logic if needed,
+      # but we should move away from this.
       GenServer.call(server, :get_credentials)
     end
 
@@ -61,14 +69,28 @@ defmodule SmtInfluxSync.SMT.Session do
     def init([]) do
       Logger.info("[session] Starting SMT session manager")
       send(self(), :setup)
-      {:ok, %{token: nil, esiid: nil, meter_number: nil, resolved: false}}
+      {:ok, %{token: nil, resolved: false}}
+    end
+
+    @impl true
+    def handle_call(:get_token, _from, %{resolved: true} = state) do
+      {:reply, {:ok, state.token}, state}
+    end
+
+    @impl true
+    def handle_call(:get_token, _from, state) do
+      {:reply, {:error, :not_ready}, state}
     end
 
     @impl true
     def handle_call(:get_credentials, _from, %{resolved: true} = state) do
-      Logger.metadata(esiid: state.esiid)
-      {:reply, {:ok, %{token: state.token, esiid: state.esiid, meter_number: state.meter_number}},
-       state}
+      # Return the first active meter as "primary" for legacy workers
+      case SmtInfluxSync.Meter.list_active() do
+        [m | _] ->
+          {:reply, {:ok, %{token: state.token, esiid: m.esiid, meter_number: m.meter_number}}, state}
+        [] ->
+          {:reply, {:error, :no_active_meters}, state}
+      end
     end
 
     def handle_call(:get_credentials, _from, state) do
@@ -77,7 +99,6 @@ defmodule SmtInfluxSync.SMT.Session do
 
     @impl true
     def handle_call(:refresh_token, _from, state) do
-      Logger.metadata(esiid: state.esiid)
       Logger.info("Refreshing SMT token")
 
       case authenticate_and_save() do
@@ -94,11 +115,7 @@ defmodule SmtInfluxSync.SMT.Session do
     def handle_info(:setup, state) do
       case setup() do
         {:ok, new_state} ->
-          Logger.metadata(esiid: new_state.esiid)
-          Logger.info(
-            "Ready — ESIID=#{new_state.esiid} MeterNumber=#{new_state.meter_number}"
-          )
-
+          Logger.info("SMT Session Ready")
           {:noreply, Map.put(new_state, :resolved, true)}
 
         {:error, reason} ->
@@ -111,10 +128,21 @@ defmodule SmtInfluxSync.SMT.Session do
     # --- Private ---
 
     defp setup do
-      with {:ok, token} <- load_or_authenticate(),
-           {:ok, {esiid, meter_number}} <-
-             resolve_meter(token, Config.smt_esiid(), Config.smt_meter_number()) do
-        {:ok, %{token: token, esiid: esiid, meter_number: meter_number}}
+      with {:ok, token} <- load_or_authenticate() do
+        discover_meters(token)
+        {:ok, %{token: token}}
+      end
+    end
+
+    defp discover_meters(token) do
+      case SMTClient.get_meters(token, Config.smt_esiid()) do
+        {:ok, meters} ->
+          Enum.each(meters, fn m ->
+            SmtInfluxSync.Meter.upsert(m.esiid, m.meter_number)
+          end)
+          Logger.info("[session] Discovered #{length(meters)} meters")
+        {:error, reason} ->
+          Logger.error("[session] Failed to discover meters: #{inspect(reason)}")
       end
     end
 
@@ -162,40 +190,6 @@ defmodule SmtInfluxSync.SMT.Session do
       case File.write(path, token) do
         :ok -> Logger.info("[session] Token persisted to #{path}")
         {:error, reason} -> Logger.warning("[session] Failed to persist token: #{inspect(reason)}")
-      end
-    end
-
-    defp resolve_meter(_token, esiid, meter_number)
-         when is_binary(esiid) and esiid != "*" and is_binary(meter_number) do
-      {:ok, {esiid, meter_number}}
-    end
-
-    defp resolve_meter(token, "*", _meter_number) do
-      case SMTClient.get_meters(token, "*") do
-        {:ok, [%{esiid: esiid, meter_number: mn} | rest]} ->
-          if rest != [],
-            do: Logger.warning("[session] Multiple meters found, using first (ESIID=#{esiid})")
-
-          {:ok, {esiid, mn}}
-
-        {:ok, []} ->
-          {:error, :no_meters_found}
-
-        {:error, reason} ->
-          {:error, reason}
-      end
-    end
-
-    defp resolve_meter(token, esiid, _meter_number) do
-      case SMTClient.get_meters(token, esiid) do
-        {:ok, [%{esiid: ^esiid, meter_number: mn} | _]} ->
-          {:ok, {esiid, mn}}
-
-        {:ok, []} ->
-          {:error, {:meter_not_found, esiid}}
-
-        {:error, reason} ->
-          {:error, reason}
       end
     end
   end
