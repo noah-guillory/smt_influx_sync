@@ -129,7 +129,23 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       next_sync_dt = DateTime.add(now, ms_until, :millisecond)
       next_sync = format_time(next_sync_dt)
 
-      %{source: source, last_sync: last_sync, next_sync: next_sync, latest_data_point: latest_data_point}
+      is_stale = 
+        case latest_log do
+          %{completed_at: completed_at} ->
+            stale_threshold = 
+              case source do
+                "interval" -> 120 # 2 hours
+                "daily" -> 48 * 60 # 48 hours
+                "monthly" -> 48 * 60 # 48 hours
+                "odr" -> 60 # 1 hour
+                "ynab" -> 48 * 60 # 48 hours
+                _ -> 60
+              end
+            DateTime.diff(DateTime.utc_now(), completed_at, :minute) > stale_threshold
+          _ -> false
+        end
+
+      %{source: source, last_sync: last_sync, next_sync: next_sync, latest_data_point: latest_data_point, is_stale: is_stale}
     end)
   end
 
@@ -149,9 +165,17 @@ defmodule SmtInfluxSyncWeb.StatusLive do
             <%= for status <- @sync_status do %>
               <div class="flex justify-between items-center border-b border-slate-100 pb-3 last:border-0 last:pb-0">
                 <div class="space-y-1">
-                  <dt class="text-slate-500 capitalize font-medium"><%= status.source %></dt>
+                  <div class="flex items-center gap-2">
+                    <dt class="text-slate-500 capitalize font-medium"><%= status.source %></dt>
+                    <%= if status.is_stale do %>
+                      <span class="px-1.5 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded uppercase tracking-wider">Stale</span>
+                    <% end %>
+                  </div>
                   <dd class="text-xs text-slate-400">
                     Last: <span class="text-slate-900 font-medium"><%= status.last_sync %></span>
+                  </dd>
+                  <dd class="text-xs text-slate-400">
+                    Data: <span class="text-green-600 font-medium"><%= status.latest_data_point %></span>
                   </dd>
                   <dd class="text-xs text-slate-400">
                     Next: <span class="text-indigo-600 font-medium"><%= status.next_sync %></span>

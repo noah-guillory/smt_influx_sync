@@ -10,7 +10,7 @@ Currently, the UI shows the "Last Sync Time" (when the Oban job ran). However, a
 *   **Implementation**: Query InfluxDB or `sync_metadata` for the actual timestamp of the most recent electricity reading.
 *   **Benefit**: Distinguishes between "the sync system is working" and "the data is up-to-date."
 
-### Proactive "Stale Data" Warnings
+### Proactive "Stale Data" Warnings [COMPLETED]
 Visual cues for when the system isn't keeping up with its expected schedule.
 *   **Enhancement**: Highlight sync rows in red or add a "Stale" badge if the `last_sync` is significantly older than the expected interval (e.g., `Interval` hasn't run in > 1 hour).
 *   **Benefit**: Immediate visual identification of synchronization gaps without checking logs.
