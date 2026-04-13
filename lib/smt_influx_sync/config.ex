@@ -43,6 +43,7 @@ defmodule SmtInfluxSync.Config do
   def ynab_budget_id, do: Application.fetch_env!(@app, :ynab_budget_id)
   def ynab_category_id, do: Application.fetch_env!(@app, :ynab_category_id)
   def kwh_rate, do: Application.fetch_env!(@app, :kwh_rate)
+  def kwh_tiers, do: Application.get_env(@app, :kwh_tiers, "")
 
   def ynab_base_url, do: Application.get_env(@app, :ynab_base_url, "https://api.ynab.com")
 

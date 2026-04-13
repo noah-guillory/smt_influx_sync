@@ -47,6 +47,7 @@ defmodule SmtInfluxSync.ConfigManager do
       ynab_budget_id: Application.get_env(@app, :ynab_budget_id),
       ynab_category_id: Application.get_env(@app, :ynab_category_id),
       kwh_rate: Application.get_env(@app, :kwh_rate),
+      kwh_tiers: Application.get_env(@app, :kwh_tiers, ""),
       odr_sync_time: Application.get_env(@app, :odr_sync_time),
       interval_sync_time: Application.get_env(@app, :interval_sync_time),
       daily_sync_time: Application.get_env(@app, :daily_sync_time),
