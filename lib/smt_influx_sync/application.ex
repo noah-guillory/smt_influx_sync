@@ -34,6 +34,12 @@ defmodule SmtInfluxSync.Application do
           else: []
         )
 
+    # Add custom logger handler for real-time logs in UI
+    :logger.add_handler(:smt_logs, SmtInfluxSync.LoggerHandler, %{
+      level: :info,
+      formatter: {:logger_formatter, %{}}
+    })
+
     # See https://hexdocs.pm/elixir/Supervisor.html
     # for other strategies and supported options
     opts = [strategy: :one_for_one, name: SmtInfluxSync.Supervisor]

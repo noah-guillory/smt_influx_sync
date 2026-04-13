@@ -34,7 +34,7 @@ SMT performance can vary wildly.
 *   **Enhancement**: Include the API response time and payload size in the `Sync History` messages (e.g., `"Success: Fetched 96 records in 1.4s"`).
 *   **Benefit**: Helps diagnose whether sync failures are due to local networking or SMT portal instability.
 
-### Integrated Log Viewer
+### Integrated Log Viewer [COMPLETED]
 The current "Sync History" only shows high-level success/fail events.
 *   **Enhancement**: A dedicated "System Logs" tab that streams the last 100 lines of standard application logs, filtered for `SmtInfluxSync` tags.
 *   **Benefit**: Eliminates the need for `ssh` or `docker logs` access to diagnose lower-level connection errors or Ecto issues.

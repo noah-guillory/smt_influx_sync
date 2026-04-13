@@ -7,9 +7,16 @@ defmodule SmtInfluxSyncWeb.StatusLive do
     if connected?(socket) do
       :timer.send_interval(5000, self(), :tick)
       Phoenix.PubSub.subscribe(SmtInfluxSync.PubSub, "sync_events")
+      Phoenix.PubSub.subscribe(SmtInfluxSync.PubSub, "system_logs")
     end
 
-    {:ok, assign_data(socket)}
+    {:ok, assign_data(socket) |> assign(system_logs: [], active_tab: "history")}
+  end
+
+  @impl true
+  def handle_info({:log_event, log}, socket) do
+    logs = [log | Enum.take(socket.assigns.system_logs, 49)]
+    {:noreply, assign(socket, system_logs: logs)}
   end
 
   @impl true
@@ -65,6 +72,11 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   def handle_event("toggle_meter", %{"id" => id}, socket) do
     SmtInfluxSync.Meter.toggle_active(id)
     {:noreply, assign_data(socket)}
+  end
+
+  @impl true
+  def handle_event("set_tab", %{"tab" => tab}, socket) do
+    {:noreply, assign(socket, active_tab: tab)}
   end
 
   defp format_dt(nil), do: "Never"
@@ -253,42 +265,87 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       </div>
 
       <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 mb-12">
-        <h2 class="text-2xl font-semibold mb-6 text-slate-700">Sync History</h2>
-        <div class="overflow-x-auto">
-          <table class="w-full text-left">
-            <thead>
-              <tr class="text-slate-500 border-b border-slate-100">
-                <th class="pb-3 font-medium">Source</th>
-                <th class="pb-3 font-medium">Status</th>
-                <th class="pb-3 font-medium">Time</th>
-                <th class="pb-3 font-medium">Message</th>
-              </tr>
-            </thead>
-            <tbody class="divide-y divide-slate-50">
-              <%= for log <- @recent_logs do %>
-                <tr>
-                  <td class="py-3 capitalize font-medium text-slate-700"><%= log.source %></td>
-                  <td class="py-3">
-                    <span class={[
-                      "px-2 py-1 rounded-full text-xs font-semibold",
-                      log.status == "success" && "bg-green-100 text-green-700",
-                      log.status == "fail" && "bg-red-100 text-red-700",
-                      log.status == "start" && "bg-blue-100 text-blue-700"
-                    ]}>
-                      <%= log.status %>
-                    </span>
-                  </td>
-                  <td class="py-3 text-slate-500 text-sm">
-                    <%= format_dt(log.inserted_at) %>
-                  </td>
-                  <td class="py-3 text-slate-600 text-sm truncate max-w-xs">
-                    <%= log.message %>
-                  </td>
-                </tr>
-              <% end %>
-            </tbody>
-          </table>
+        <div class="flex border-b border-slate-100 mb-6">
+          <button
+            phx-click="set_tab"
+            phx-value-tab="history"
+            class={[
+              "px-4 py-2 font-semibold transition border-b-2",
+              @active_tab == "history" && "border-indigo-500 text-indigo-600",
+              @active_tab != "history" && "border-transparent text-slate-400 hover:text-slate-600"
+            ]}
+          >
+            Sync History
+          </button>
+          <button
+            phx-click="set_tab"
+            phx-value-tab="logs"
+            class={[
+              "px-4 py-2 font-semibold transition border-b-2",
+              @active_tab == "logs" && "border-indigo-500 text-indigo-600",
+              @active_tab != "logs" && "border-transparent text-slate-400 hover:text-slate-600"
+            ]}
+          >
+            System Logs
+          </button>
         </div>
+
+        <%= if @active_tab == "history" do %>
+          <div class="overflow-x-auto">
+            <table class="w-full text-left">
+              <thead>
+                <tr class="text-slate-500 border-b border-slate-100">
+                  <th class="pb-3 font-medium">Source</th>
+                  <th class="pb-3 font-medium">Status</th>
+                  <th class="pb-3 font-medium">Time</th>
+                  <th class="pb-3 font-medium">Message</th>
+                </tr>
+              </thead>
+              <tbody class="divide-y divide-slate-50">
+                <%= for log <- @recent_logs do %>
+                  <tr>
+                    <td class="py-3 capitalize font-medium text-slate-700"><%= log.source %></td>
+                    <td class="py-3">
+                      <span class={[
+                        "px-2 py-1 rounded-full text-xs font-semibold",
+                        log.status == "success" && "bg-green-100 text-green-700",
+                        log.status == "fail" && "bg-red-100 text-red-700",
+                        log.status == "start" && "bg-blue-100 text-blue-700"
+                      ]}>
+                        <%= log.status %>
+                      </span>
+                    </td>
+                    <td class="py-3 text-slate-500 text-sm">
+                      <%= format_dt(log.inserted_at) %>
+                    </td>
+                    <td class="py-3 text-slate-600 text-sm truncate max-w-xs">
+                      <%= log.message %>
+                    </td>
+                  </tr>
+                <% end %>
+              </tbody>
+            </table>
+          </div>
+        <% else %>
+          <div class="bg-slate-900 rounded-lg p-4 font-mono text-xs overflow-y-auto max-h-96 space-y-1">
+            <%= for log <- @system_logs do %>
+              <div class="flex gap-3">
+                <span class="text-slate-500"><%= Calendar.strftime(log.timestamp, "%H:%M:%S") %></span>
+                <span class={[
+                  "font-bold uppercase w-12",
+                  log.level == :info && "text-blue-400",
+                  log.level == :warning && "text-yellow-400",
+                  log.level == :error && "text-red-400",
+                  log.level == :debug && "text-slate-400"
+                ]}><%= log.level %></span>
+                <span class="text-slate-300"><%= log.message %></span>
+              </div>
+            <% end %>
+            <%= if @system_logs == [] do %>
+              <div class="text-slate-500 italic">Waiting for logs...</div>
+            <% end %>
+          </div>
+        <% end %>
       </div>
 
       <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 mb-12">
@@ -327,6 +384,7 @@ defmodule SmtInfluxSyncWeb.StatusLive do
               <tr class="text-slate-500 border-b border-slate-100">
                 <th class="pb-3 font-medium">Meter</th>
                 <th class="pb-3 font-medium">ESIID</th>
+                <th class="pb-3 font-medium">Latest Data</th>
                 <th class="pb-3 font-medium">Status</th>
                 <th class="pb-3 font-medium">Action</th>
               </tr>
