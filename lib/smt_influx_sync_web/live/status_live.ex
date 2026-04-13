@@ -4,9 +4,17 @@ defmodule SmtInfluxSyncWeb.StatusLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    if connected?(socket), do: :timer.send_interval(5000, self(), :tick)
+    if connected?(socket) do
+      :timer.send_interval(5000, self(), :tick)
+      Phoenix.PubSub.subscribe(SmtInfluxSync.PubSub, "sync_events")
+    end
 
     {:ok, assign_data(socket)}
+  end
+
+  @impl true
+  def handle_info({event, _log}, socket) when event in [:sync_started, :sync_completed, :sync_failed] do
+    {:noreply, assign_data(socket)}
   end
 
   @impl true

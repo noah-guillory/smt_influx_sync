@@ -15,7 +15,7 @@ Visual cues for when the system isn't keeping up with its expected schedule.
 *   **Enhancement**: Highlight sync rows in red or add a "Stale" badge if the `last_sync` is significantly older than the expected interval (e.g., `Interval` hasn't run in > 1 hour).
 *   **Benefit**: Immediate visual identification of synchronization gaps without checking logs.
 
-### Real-time Event Streaming (PubSub)
+### Real-time Event Streaming (PubSub) [COMPLETED]
 The current dashboard polls every 5 seconds. Transitioning to a push-based model makes the UI feel more responsive.
 *   **Enhancement**: Use `Phoenix.PubSub` to broadcast `sync_started`, `sync_completed`, and `sync_failed` events from Oban workers.
 *   **Benefit**: "Sync Now" clicks will result in immediate UI updates (new log entries appearing instantly) without waiting for the next poll cycle.

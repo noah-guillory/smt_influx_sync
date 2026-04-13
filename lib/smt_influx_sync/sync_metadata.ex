@@ -3,7 +3,7 @@ defmodule SmtInfluxSync.SyncMetadata do
   alias SmtInfluxSync.{Repo, SyncLog}
 
   def log_start(source, message \\ nil) do
-    %SyncLog{}
+    log = %SyncLog{}
     |> SyncLog.changeset(%{
       source: source,
       status: "start",
@@ -11,10 +11,13 @@ defmodule SmtInfluxSync.SyncMetadata do
       message: message
     })
     |> Repo.insert!()
+
+    broadcast(source, {:sync_started, log})
+    log
   end
 
   def log_success(log, message \\ nil, details \\ nil, latest_data_point \\ nil) do
-    log
+    log = log
     |> SyncLog.changeset(%{
       status: "success",
       completed_at: DateTime.utc_now(),
@@ -23,6 +26,28 @@ defmodule SmtInfluxSync.SyncMetadata do
       latest_data_point: latest_data_point
     })
     |> Repo.update!()
+
+    broadcast(log.source, {:sync_completed, log})
+    log
+  end
+
+  def log_fail(log, message \\ nil, details \\ nil) do
+    log = log
+    |> SyncLog.changeset(%{
+      status: "fail",
+      completed_at: DateTime.utc_now(),
+      message: message,
+      details: details
+    })
+    |> Repo.update!()
+
+    broadcast(log.source, {:sync_failed, log})
+    log
+  end
+
+  defp broadcast(source, event) do
+    Phoenix.PubSub.broadcast(SmtInfluxSync.PubSub, "sync_events", event)
+    Phoenix.PubSub.broadcast(SmtInfluxSync.PubSub, "sync_events:#{source}", event)
   end
 
   def get_latest_data_point(source) do
@@ -33,17 +58,6 @@ defmodule SmtInfluxSync.SyncMetadata do
     |> limit(1)
     |> select([l], l.latest_data_point)
     |> Repo.one()
-  end
-
-  def log_fail(log, message \\ nil, details \\ nil) do
-    log
-    |> SyncLog.changeset(%{
-      status: "fail",
-      completed_at: DateTime.utc_now(),
-      message: message,
-      details: details
-    })
-    |> Repo.update!()
   end
 
   def get_latest_sync(source) do
