@@ -33,7 +33,7 @@ defmodule SmtInfluxSync.InfluxWriter do
   end
 
   def pending_count do
-    Repo.aggregate(PendingWrite, :count)
+    Repo.aggregate(PendingWrite, :count) || 0
   end
 
   def get_status do
@@ -46,12 +46,14 @@ defmodule SmtInfluxSync.InfluxWriter do
   def init([]) do
     send(self(), :flush)
     schedule_flush()
+    Process.send_after(self(), :stats, 10_000)
 
     {:ok,
       %{
         healthy: true,
         last_write_at: nil,
-        last_write_status: nil
+        last_write_status: nil,
+        buffer_history: []
       }}
   end
 
@@ -83,14 +85,35 @@ defmodule SmtInfluxSync.InfluxWriter do
 
   @impl true
   def handle_call(:get_status, _from, state) do
+    one_minute_ago = DateTime.add(DateTime.utc_now(), -60)
+    
+    growth = 
+      case Enum.filter(state.buffer_history, fn {ts, _} -> DateTime.compare(ts, one_minute_ago) != :lt end) do
+        history when length(history) >= 2 ->
+          {_, latest} = List.first(history)
+          {_, oldest} = List.last(history)
+          latest - oldest
+        _ -> 0
+      end
+
     status = %{
       healthy: state.healthy,
       pending_count: pending_count(),
       last_write_at: state.last_write_at,
-      last_write_status: state.last_write_status
+      last_write_status: state.last_write_status,
+      buffer_growth: growth
     }
 
     {:reply, status, state}
+  end
+
+  @impl true
+  def handle_info(:stats, state) do
+    now = DateTime.utc_now()
+    count = pending_count()
+    history = [{now, count} | Enum.take(state.buffer_history, 29)]
+    Process.send_after(self(), :stats, 10_000)
+    {:noreply, %{state | buffer_history: history}}
   end
 
   @impl true

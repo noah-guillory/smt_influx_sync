@@ -20,7 +20,7 @@ The current dashboard polls every 5 seconds. Transitioning to a push-based model
 *   **Enhancement**: Use `Phoenix.PubSub` to broadcast `sync_started`, `sync_completed`, and `sync_failed` events from Oban workers.
 *   **Benefit**: "Sync Now" clicks will result in immediate UI updates (new log entries appearing instantly) without waiting for the next poll cycle.
 
-### InfluxDB Buffer Growth Trends
+### InfluxDB Buffer Growth Trends [COMPLETED]
 The `pending_count` is currently a static snapshot.
 *   **Enhancement**: Display the growth rate of the DETS buffer (e.g., "+50 messages in the last 1m").
 *   **Benefit**: Helps identify "silent" bottlenecks where the writer is healthy but cannot keep up with the incoming data volume.

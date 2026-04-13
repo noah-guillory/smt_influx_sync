@@ -216,7 +216,17 @@ defmodule SmtInfluxSyncWeb.StatusLive do
             </div>
             <div class="flex justify-between border-b border-slate-100 pb-2">
               <dt class="text-slate-500">Buffered Messages</dt>
-              <dd class="font-medium text-slate-900"><%= @influx_status.pending_count %></dd>
+              <dd class="font-medium text-slate-900">
+                <%= @influx_status.pending_count %>
+                <span class={[
+                  "ml-2 text-xs",
+                  @influx_status.buffer_growth > 0 && "text-red-500",
+                  @influx_status.buffer_growth < 0 && "text-green-500",
+                  @influx_status.buffer_growth == 0 && "text-slate-400"
+                ]}>
+                  <%= if @influx_status.buffer_growth > 0, do: "+" %><%= @influx_status.buffer_growth %>/m
+                </span>
+              </dd>
             </div>
             <div class="flex justify-between border-b border-slate-100 pb-2">
               <dt class="text-slate-500">Last Write</dt>
