@@ -42,12 +42,12 @@ defmodule SmtInfluxSync.Workers.Daily do
               started_at = System.monotonic_time(:millisecond)
 
               case do_sync(token, meter, custom_range) do
-                {:ok, max_ts} ->
+                {:ok, max_ts, count} ->
                   elapsed = System.monotonic_time(:millisecond) - started_at
                   Logger.info("[daily] Sync completed successfully in #{elapsed}ms")
-                  
+
                   latest_dt = if max_ts, do: DateTime.from_unix!(max_ts), else: nil
-                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed}ms", nil, latest_dt)
+                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Fetched #{count} records in #{elapsed}ms", nil, latest_dt)
                   if max_ts, do: SmtInfluxSync.Meter.update_last_data_point(meter.id, "daily", max_ts)
                   :ok
 
@@ -103,11 +103,12 @@ defmodule SmtInfluxSync.Workers.Daily do
 
     case SMTClient.get_daily_data(token, meter.esiid, start_date, end_date) do
       {:ok, records} ->
-        Logger.info("[daily] Fetched #{length(records)} records")
+        count = length(records)
+        Logger.info("[daily] Fetched #{count} records")
         case Helper.write_records("electricity_daily", tags, records, &Helper.parse_daily_record/1) do
           {:ok, max_ts} ->
             unless custom_range, do: Helper.save_last_sync("daily", end_date)
-            {:ok, max_ts}
+            {:ok, max_ts, count}
         end
 
       {:error, :unauthorized} -> {:error, :unauthorized}

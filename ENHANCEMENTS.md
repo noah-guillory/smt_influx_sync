@@ -29,7 +29,7 @@ The `pending_count` is currently a static snapshot.
 
 ## 2. Advanced Diagnostics
 
-### SMT API Latency Tracking
+### SMT API Latency Tracking [COMPLETED]
 SMT performance can vary wildly.
 *   **Enhancement**: Include the API response time and payload size in the `Sync History` messages (e.g., `"Success: Fetched 96 records in 1.4s"`).
 *   **Benefit**: Helps diagnose whether sync failures are due to local networking or SMT portal instability.
