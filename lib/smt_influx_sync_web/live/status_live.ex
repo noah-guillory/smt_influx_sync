@@ -50,6 +50,20 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   defp parse_value("kwh_rate", v), do: String.to_float(v)
   defp parse_value(_, v), do: v
 
+  defp format_dt(nil), do: "Never"
+  defp format_dt(dt) do
+    dt
+    |> DateTime.shift_zone!(Config.timezone())
+    |> Calendar.strftime("%m/%d %I:%M:%S %p")
+  end
+
+  defp format_time(nil), do: "Never"
+  defp format_time(dt) do
+    dt
+    |> DateTime.shift_zone!(Config.timezone())
+    |> Calendar.strftime("%I:%M:%S %p")
+  end
+
   defp assign_data(socket) do
     assign(socket,
       sync_status: fetch_sync_status(),
@@ -89,7 +103,7 @@ defmodule SmtInfluxSyncWeb.StatusLive do
             path = Config.last_sync_path(source)
             if File.exists?(path), do: File.read!(path) |> String.trim(), else: "Never"
           log -> 
-            Calendar.strftime(log.completed_at, "%m/%d %H:%M:%S")
+            format_dt(log.completed_at)
         end
 
       time_str =
@@ -104,7 +118,7 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       {h, m} = Config.parse_time_string(time_str)
       ms_until = SmtInfluxSync.Workers.Helper.ms_until_next_time(h, m)
       next_sync_dt = DateTime.add(now, ms_until, :millisecond)
-      next_sync = Calendar.strftime(next_sync_dt, "%H:%M:%S")
+      next_sync = format_time(next_sync_dt)
 
       %{source: source, last_sync: last_sync, next_sync: next_sync}
     end)
@@ -167,7 +181,7 @@ defmodule SmtInfluxSyncWeb.StatusLive do
               <dt class="text-slate-500">Last Write</dt>
               <dd class="font-medium text-slate-900">
                 <%= if @influx_status.last_write_at do %>
-                  <%= Calendar.strftime(@influx_status.last_write_at, "%H:%M:%S") %>
+                  <%= format_time(@influx_status.last_write_at) %>
                   (<%= case @influx_status.last_write_status do
                     :ok -> "Success"
                     {:error, reason} -> "Error: #{inspect(reason)}"
@@ -214,7 +228,7 @@ defmodule SmtInfluxSyncWeb.StatusLive do
                     </span>
                   </td>
                   <td class="py-3 text-slate-500 text-sm">
-                    <%= Calendar.strftime(log.inserted_at, "%m/%d %H:%M:%S") %>
+                    <%= format_dt(log.inserted_at) %>
                   </td>
                   <td class="py-3 text-slate-600 text-sm truncate max-w-xs">
                     <%= log.message %>
