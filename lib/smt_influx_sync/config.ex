@@ -39,6 +39,9 @@ defmodule SmtInfluxSync.Config do
   def healthchecks_ping_url, do: Application.get_env(@app, :healthchecks_ping_url)
   def ynab_healthchecks_ping_url, do: Application.get_env(@app, :ynab_healthchecks_ping_url)
 
+  def discord_webhook_url, do: Application.get_env(@app, :discord_webhook_url)
+  def slack_webhook_url, do: Application.get_env(@app, :slack_webhook_url)
+
   def ynab_access_token, do: Application.fetch_env!(@app, :ynab_access_token)
   def ynab_budget_id, do: Application.fetch_env!(@app, :ynab_budget_id)
   def ynab_category_id, do: Application.fetch_env!(@app, :ynab_category_id)

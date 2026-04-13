@@ -69,7 +69,8 @@ defmodule SmtInfluxSync.Application do
       {"interval", SmtInfluxSync.Workers.Interval, 1},
       {"monthly", SmtInfluxSync.Workers.Monthly, 24},
       {"odr", SmtInfluxSync.Workers.ODR, 1},
-      {"ynab", SmtInfluxSync.YnabSyncWorker, 24}
+      {"ynab", SmtInfluxSync.YnabSyncWorker, 24},
+      {"stale_check", SmtInfluxSync.Workers.StaleCheck, 6}
     ]
 
     Enum.each(jobs, fn {source, worker, max_age} ->

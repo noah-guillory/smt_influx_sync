@@ -43,7 +43,7 @@ The current "Sync History" only shows high-level success/fail events.
 
 ## 3. External Integrations & Alerts
 
-### Webhook Notifications
+### Webhook Notifications [COMPLETED]
 Don't rely on the user checking the dashboard.
 *   **Enhancement**: Add support for Discord, Slack, or Telegram webhooks.
 *   **Trigger**: Send an alert if a meter hasn't successfully synced any new data for > 24 hours.
