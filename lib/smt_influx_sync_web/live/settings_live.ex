@@ -24,9 +24,27 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
   end
 
   @impl true
+  def handle_event("toggle_meter", %{"id" => id}, socket) do
+    SmtInfluxSync.Meter.toggle_active(id)
+    {:noreply, assign_data(socket)}
+  end
+
+  @impl true
   def handle_event("update_meter_label", %{"id" => id, "label" => label}, socket) do
     SmtInfluxSync.Meter.update_label(id, label)
     {:noreply, assign_data(socket)}
+  end
+
+  @impl true
+  def handle_event("add_meter", %{"esiid" => esiid, "meter_number" => meter_number}, socket) do
+    case SmtInfluxSync.Meter.upsert(esiid, meter_number) do
+      {:ok, _meter} ->
+        {:noreply, socket |> put_flash(:info, "Meter added successfully!") |> assign_data()}
+      {:error, changeset} ->
+        # Simple error handling for now
+        errors = Enum.map(changeset.errors, fn {k, {msg, _}} -> "#{k} #{msg}" end) |> Enum.join(", ")
+        {:noreply, socket |> put_flash(:error, "Failed to add meter: #{errors}")}
+    end
   end
 
   @impl true
@@ -152,6 +170,7 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
                 <th class="pb-3 font-medium">Meter Number</th>
                 <th class="pb-3 font-medium">Label (Name)</th>
                 <th class="pb-3 font-medium">Status</th>
+                <th class="pb-3 font-medium text-right">Action</th>
               </tr>
             </thead>
             <tbody class="divide-y divide-slate-50">
@@ -179,11 +198,43 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
                       <%= if meter.is_active, do: "Active", else: "Inactive" %>
                     </span>
                   </td>
+                  <td class="py-4 text-right">
+                    <button
+                      type="button"
+                      phx-click="toggle_meter"
+                      phx-value-id={meter.id}
+                      class={[
+                        "text-xs px-3 py-1 font-semibold rounded transition",
+                        meter.is_active && "bg-red-50 hover:bg-red-100 text-red-600",
+                        !meter.is_active && "bg-green-50 hover:bg-green-100 text-green-600"
+                      ]}
+                    >
+                      <%= if meter.is_active, do: "Deactivate", else: "Activate" %>
+                    </button>
+                  </td>
                 </tr>
               <% end %>
             </tbody>
           </table>
         </div>
+        
+        <div class="mt-8 pt-6 border-t border-slate-100">
+          <h3 class="text-sm font-semibold text-slate-900 mb-4 uppercase tracking-wider">Manually Add Meter</h3>
+          <form phx-submit="add_meter" class="flex flex-wrap items-end gap-4">
+            <div class="flex-1 min-w-[200px]">
+              <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">ESIID</label>
+              <input type="text" name="esiid" required class="w-full text-sm rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="e.g. 10443720000000000" />
+            </div>
+            <div class="flex-1 min-w-[200px]">
+              <label class="block text-[10px] font-bold text-slate-500 uppercase mb-1">Meter Number</label>
+              <input type="text" name="meter_number" required class="w-full text-sm rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" placeholder="e.g. 123456789" />
+            </div>
+            <button type="submit" class="px-4 py-2 bg-slate-800 hover:bg-slate-900 text-white text-sm font-semibold rounded-md transition shadow-sm">
+              Add Meter
+            </button>
+          </form>
+        </div>
+
         <p class="mt-4 text-xs text-slate-400 italic">
           Labels help you identify meters. Changes are saved automatically when you click away.
         </p>
