@@ -23,6 +23,7 @@ config :smt_influx_sync, SmtInfluxSync.PubSub,
   adapter: Phoenix.PubSub.PG2
 
 config :smt_influx_sync, Oban,
+  engine: Oban.Engines.Lite,
   repo: SmtInfluxSync.Repo,
   prefix: false,
   notifier: Oban.Notifiers.Isolated,
