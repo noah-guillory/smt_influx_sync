@@ -51,6 +51,11 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   defp parse_value(_, v), do: v
 
   defp format_dt(nil), do: "Never"
+  defp format_dt(%NaiveDateTime{} = ndt) do
+    ndt
+    |> DateTime.from_naive!("Etc/UTC")
+    |> format_dt()
+  end
   defp format_dt(dt) do
     dt
     |> DateTime.shift_zone!(Config.timezone())
@@ -58,6 +63,11 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   end
 
   defp format_time(nil), do: "Never"
+  defp format_time(%NaiveDateTime{} = ndt) do
+    ndt
+    |> DateTime.from_naive!("Etc/UTC")
+    |> format_time()
+  end
   defp format_time(dt) do
     dt
     |> DateTime.shift_zone!(Config.timezone())

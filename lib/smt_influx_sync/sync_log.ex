@@ -10,7 +10,7 @@ defmodule SmtInfluxSync.SyncLog do
     field :message, :string
     field :details, :map
 
-    timestamps()
+    timestamps(type: :utc_datetime)
   end
 
   def changeset(sync_log, attrs) do

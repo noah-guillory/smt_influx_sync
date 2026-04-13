@@ -8,7 +8,7 @@ defmodule SmtInfluxSync.PendingWrite do
     field :fields, :map
     field :timestamp, :integer
 
-    timestamps()
+    timestamps(type: :utc_datetime)
   end
 
   def changeset(pending_write, attrs) do
