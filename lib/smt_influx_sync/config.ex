@@ -46,15 +46,20 @@ defmodule SmtInfluxSync.Config do
 
   def ynab_base_url, do: Application.get_env(@app, :ynab_base_url, "https://api.ynab.com")
 
-  def ynab_sync_interval_ms,
-    do: Application.get_env(@app, :ynab_sync_interval_ms, 86_400_000 * 30)
+  def ynab_sync_time, do: Application.get_env(@app, :ynab_sync_time, "03:00")
+  def odr_sync_time, do: Application.get_env(@app, :odr_sync_time, "02:00")
+  def interval_sync_time, do: Application.get_env(@app, :interval_sync_time, "02:30")
+  def daily_sync_time, do: Application.get_env(@app, :daily_sync_time, "02:45")
+  def monthly_sync_time, do: Application.get_env(@app, :monthly_sync_time, "03:15")
+
+  def parse_time_string(str) do
+    case String.split(str, ":") do
+      [h, m] -> {String.to_integer(h), String.to_integer(m)}
+      _ -> {2, 0}
+    end
+  end
 
   def smt_request_timeout_ms, do: Application.get_env(@app, :smt_request_timeout_ms, 120_000)
-
-  def odr_sync_interval_ms, do: Application.get_env(@app, :odr_sync_interval_ms, 3_600_000)
-  def interval_sync_interval_ms, do: Application.get_env(@app, :interval_sync_interval_ms, 3_600_000)
-  def daily_sync_interval_ms, do: Application.get_env(@app, :daily_sync_interval_ms, 86_400_000)
-  def monthly_sync_interval_ms, do: Application.get_env(@app, :monthly_sync_interval_ms, 86_400_000)
 
   def poll_interval_ms, do: Application.get_env(@app, :poll_interval_ms, 5_000)
   def poll_max_attempts, do: Application.get_env(@app, :poll_max_attempts, 24)

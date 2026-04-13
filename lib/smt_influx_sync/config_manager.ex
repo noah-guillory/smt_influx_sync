@@ -46,7 +46,12 @@ defmodule SmtInfluxSync.ConfigManager do
       ynab_access_token: Application.get_env(@app, :ynab_access_token),
       ynab_budget_id: Application.get_env(@app, :ynab_budget_id),
       ynab_category_id: Application.get_env(@app, :ynab_category_id),
-      kwh_rate: Application.get_env(@app, :kwh_rate)
+      kwh_rate: Application.get_env(@app, :kwh_rate),
+      odr_sync_time: Application.get_env(@app, :odr_sync_time),
+      interval_sync_time: Application.get_env(@app, :interval_sync_time),
+      daily_sync_time: Application.get_env(@app, :daily_sync_time),
+      monthly_sync_time: Application.get_env(@app, :monthly_sync_time),
+      ynab_sync_time: Application.get_env(@app, :ynab_sync_time)
     }
     
     save_overrides(initial_config)

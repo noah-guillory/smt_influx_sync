@@ -6,6 +6,36 @@ defmodule SmtInfluxSync.Workers.Helper do
   alias SmtInfluxSync.{Config, InfluxWriter}
 
   @doc """
+  Calculates the milliseconds until the next occurrence of a given hour and minute
+  in the configured timezone.
+  """
+  def ms_until_next_time(hour, minute) do
+    timezone = Config.timezone()
+    now = DateTime.now!(timezone)
+    
+    # Try today
+    today_target = 
+      now
+      |> DateTime.to_date()
+      |> NaiveDateTime.new!(Time.new!(hour, minute, 0))
+      |> DateTime.from_naive!(timezone)
+
+    target =
+      if DateTime.compare(today_target, now) == :gt do
+        today_target
+      else
+        # Tomorrow
+        now
+        |> DateTime.to_date()
+        |> Date.add(1)
+        |> NaiveDateTime.new!(Time.new!(hour, minute, 0))
+        |> DateTime.from_naive!(timezone)
+      end
+
+    DateTime.diff(target, now, :millisecond)
+  end
+
+  @doc """
   Returns the start date for a sync window.
   """
   def last_sync_start(source, today) do

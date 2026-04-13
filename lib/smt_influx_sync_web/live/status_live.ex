@@ -38,7 +38,8 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       |> Map.take([
         "smt_username", "smt_password", "smt_esiid", "smt_meter_number",
         "influx_url", "influx_token", "influx_org", "influx_bucket",
-        "ynab_access_token", "ynab_budget_id", "ynab_category_id", "kwh_rate"
+        "ynab_access_token", "ynab_budget_id", "ynab_category_id", "kwh_rate",
+        "odr_sync_time", "interval_sync_time", "daily_sync_time", "monthly_sync_time", "ynab_sync_time"
       ])
       |> Map.new(fn {k, v} -> {String.to_atom(k), parse_value(k, v)} end)
 
@@ -66,12 +67,20 @@ defmodule SmtInfluxSyncWeb.StatusLive do
         ynab_access_token: Config.ynab_access_token(),
         ynab_budget_id: Config.ynab_budget_id(),
         ynab_category_id: Config.ynab_category_id(),
-        kwh_rate: Config.kwh_rate()
+        kwh_rate: Config.kwh_rate(),
+        odr_sync_time: Config.odr_sync_time(),
+        interval_sync_time: Config.interval_sync_time(),
+        daily_sync_time: Config.daily_sync_time(),
+        monthly_sync_time: Config.monthly_sync_time(),
+        ynab_sync_time: Config.ynab_sync_time()
       }
     )
   end
 
   defp fetch_sync_status do
+    timezone = Config.timezone()
+    now = DateTime.now!(timezone)
+
     ~w(daily interval monthly odr ynab)
     |> Enum.map(fn source ->
       last_sync = 
@@ -82,7 +91,22 @@ defmodule SmtInfluxSyncWeb.StatusLive do
           log -> 
             Calendar.strftime(log.completed_at, "%m/%d %H:%M:%S")
         end
-      {source, last_sync}
+
+      time_str =
+        case source do
+          "daily" -> Config.daily_sync_time()
+          "interval" -> Config.interval_sync_time()
+          "monthly" -> Config.monthly_sync_time()
+          "odr" -> Config.odr_sync_time()
+          "ynab" -> Config.ynab_sync_time()
+        end
+
+      {h, m} = Config.parse_time_string(time_str)
+      ms_until = SmtInfluxSync.Workers.Helper.ms_until_next_time(h, m)
+      next_sync_dt = DateTime.add(now, ms_until, :millisecond)
+      next_sync = Calendar.strftime(next_sync_dt, "%H:%M:%S")
+
+      %{source: source, last_sync: last_sync, next_sync: next_sync}
     end)
   end
 
@@ -98,16 +122,21 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       <div class="grid grid-cols-1 md:grid-cols-2 gap-6 mb-12">
         <div class="bg-white p-6 rounded-xl shadow-sm border border-slate-200">
           <h2 class="text-xl font-semibold mb-4 text-slate-700">Sync Status</h2>
-          <dl class="space-y-3">
-            <%= for {source, last_sync} <- @sync_status do %>
-              <div class="flex justify-between items-center border-b border-slate-100 pb-2">
-                <div>
-                  <dt class="text-slate-500 capitalize"><%= source %></dt>
-                  <dd class="font-medium text-slate-900"><%= last_sync %></dd>
+          <dl class="space-y-4">
+            <%= for status <- @sync_status do %>
+              <div class="flex justify-between items-center border-b border-slate-100 pb-3 last:border-0 last:pb-0">
+                <div class="space-y-1">
+                  <dt class="text-slate-500 capitalize font-medium"><%= status.source %></dt>
+                  <dd class="text-xs text-slate-400">
+                    Last: <span class="text-slate-900 font-medium"><%= status.last_sync %></span>
+                  </dd>
+                  <dd class="text-xs text-slate-400">
+                    Next: <span class="text-indigo-600 font-medium"><%= status.next_sync %></span>
+                  </dd>
                 </div>
                 <button
                   phx-click="force_sync"
-                  phx-value-source={source}
+                  phx-value-source={status.source}
                   class="text-xs px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-semibold rounded transition"
                 >
                   Sync Now
@@ -258,6 +287,32 @@ defmodule SmtInfluxSyncWeb.StatusLive do
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">kWh Rate ($)</label>
               <input type="text" name="kwh_rate" value={@config.kwh_rate} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+            </div>
+          </div>
+
+          <hr class="border-slate-100" />
+
+          <h3 class="text-lg font-medium text-slate-700 mb-4">Scheduled Sync Times (HH:MM)</h3>
+          <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">ODR Sync Time</label>
+              <input type="text" name="odr_sync_time" value={@config.odr_sync_time} placeholder="02:00" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Interval Sync Time</label>
+              <input type="text" name="interval_sync_time" value={@config.interval_sync_time} placeholder="02:30" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Daily Sync Time</label>
+              <input type="text" name="daily_sync_time" value={@config.daily_sync_time} placeholder="02:45" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Monthly Sync Time</label>
+              <input type="text" name="monthly_sync_time" value={@config.monthly_sync_time} placeholder="03:15" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">YNAB Sync Time</label>
+              <input type="text" name="ynab_sync_time" value={@config.ynab_sync_time} placeholder="03:00" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
             </div>
           </div>
 

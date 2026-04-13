@@ -10,21 +10,32 @@ defmodule SmtInfluxSync.YnabSyncWorker do
 
   @impl true
   def init([]) do
-    Logger.info("[ynab] Worker starting, first sync scheduled immediately")
-    Process.send_after(self(), :sync, 0)
+    Logger.info("[ynab] Worker starting")
+    
+    if SmtInfluxSync.SyncMetadata.needs_initial_sync?("ynab", 24) do
+      Process.send_after(self(), :sync, 0)
+    else
+      schedule_sync()
+    end
+
     {:ok, %{}}
   end
 
   @impl true
   def handle_info(:sync, state) do
-    interval_days = div(Config.ynab_sync_interval_ms(), 86_400_000)
-    Logger.info("[ynab] Sync triggered — next sync in #{interval_days}d")
+    Logger.info("[ynab] Sync triggered")
     do_sync()
-    Process.send_after(self(), :sync, Config.ynab_sync_interval_ms())
+    schedule_sync()
     {:noreply, state}
   end
 
   # --- Private ---
+
+  defp schedule_sync do
+    {h, m} = Config.parse_time_string(Config.ynab_sync_time())
+    ms = SmtInfluxSync.Workers.Helper.ms_until_next_time(h, m)
+    Process.send_after(self(), :sync, ms)
+  end
 
   defp do_sync do
     started_at = System.monotonic_time(:millisecond)

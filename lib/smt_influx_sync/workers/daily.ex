@@ -16,7 +16,13 @@ defmodule SmtInfluxSync.Workers.Daily do
   @impl true
   def init([]) do
     Logger.info("[daily] Starting daily sync worker")
-    schedule_sync(0)
+    
+    if SmtInfluxSync.SyncMetadata.needs_initial_sync?("daily", 24) do
+      schedule_sync(0)
+    else
+      schedule_sync()
+    end
+
     {:ok, %{}}
   end
 
@@ -79,7 +85,14 @@ defmodule SmtInfluxSync.Workers.Daily do
   end
 
   defp schedule_sync(interval \\ nil) do
-    ms = interval || Config.daily_sync_interval_ms()
+    ms =
+      if interval do
+        interval
+      else
+        {h, m} = Config.parse_time_string(Config.daily_sync_time())
+        Helper.ms_until_next_time(h, m)
+      end
+
     Process.send_after(self(), :sync, ms)
   end
 end

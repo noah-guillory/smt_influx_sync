@@ -16,7 +16,13 @@ defmodule SmtInfluxSync.Workers.ODR do
   @impl true
   def init([]) do
     Logger.info("[odr] Starting ODR worker")
-    schedule_sync(0)
+    
+    if SmtInfluxSync.SyncMetadata.needs_initial_sync?("odr", 1) do
+      schedule_sync(0)
+    else
+      schedule_sync()
+    end
+
     {:ok, %{}}
   end
 
@@ -106,7 +112,8 @@ defmodule SmtInfluxSync.Workers.ODR do
     case SMTClient.get_latest_read(credentials.token, credentials.esiid) do
       {:ok, :no_data} -> :stale
       {:ok, reading} ->
-        threshold_s = System.os_time(:second) - div(Config.odr_sync_interval_ms(), 1000)
+        # Use 1 hour as threshold for reusing recent reads
+        threshold_s = System.os_time(:second) - 3600
         case SMTClient.parse_odr_date(reading.date) do
           {:ok, read_unix} when read_unix >= threshold_s -> {:reuse, reading}
           _ -> :stale
@@ -160,7 +167,14 @@ defmodule SmtInfluxSync.Workers.ODR do
   end
 
   defp schedule_sync(interval \\ nil) do
-    ms = interval || Config.odr_sync_interval_ms()
+    ms =
+      if interval do
+        interval
+      else
+        {h, m} = Config.parse_time_string(Config.odr_sync_time())
+        Helper.ms_until_next_time(h, m)
+      end
+
     Process.send_after(self(), :sync, ms)
   end
 end

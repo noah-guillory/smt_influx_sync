@@ -43,6 +43,15 @@ defmodule SmtInfluxSync.SyncMetadata do
     |> Repo.one()
   end
 
+  def needs_initial_sync?(source, max_age_hours \\ 24) do
+    case get_latest_sync(source) do
+      nil -> true
+      log ->
+        threshold = DateTime.add(DateTime.utc_now(), -max_age_hours, :hour)
+        DateTime.compare(log.completed_at, threshold) == :lt
+    end
+  end
+
   def list_recent_logs(limit \\ 20) do
     SyncLog
     |> order_by([l], desc: l.inserted_at)
