@@ -5,7 +5,7 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, assign_data(socket)}
+    {:ok, assign_data(socket) |> assign(show_clear_confirm: false)}
   end
 
   @impl true
@@ -13,6 +13,26 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
     tiers = socket.assigns.config.kwh_tiers ++ [%{limit: 0, rate: 0.0}]
     config = put_in(socket.assigns.config.kwh_tiers, tiers)
     {:noreply, assign(socket, config: config)}
+  end
+
+  @impl true
+  def handle_event("show_clear_confirm", _params, socket) do
+    {:noreply, assign(socket, show_clear_confirm: true)}
+  end
+
+  @impl true
+  def handle_event("cancel_clear", _params, socket) do
+    {:noreply, assign(socket, show_clear_confirm: false)}
+  end
+
+  @impl true
+  def handle_event("confirm_clear_data", _params, socket) do
+    SmtInfluxSync.SyncMetadata.clear_all_sync_data()
+    {:noreply, 
+     socket 
+     |> put_flash(:info, "All sync metadata cleared! System will start a fresh sync.")
+     |> assign(show_clear_confirm: false)
+     |> assign_data()}
   end
 
   @impl true
@@ -380,13 +400,53 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
           </div>
         </div>
 
-        <div class="sticky bottom-6 bg-white/80 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-slate-200 flex justify-end gap-4">
-          <a href="/" class="px-6 py-3 text-slate-600 font-semibold rounded-lg hover:bg-slate-100 transition">Cancel</a>
-          <button type="submit" class="px-10 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-md transition transform active:scale-95">
-            Save All Settings
-          </button>
+        <div class="sticky bottom-6 bg-white/80 backdrop-blur-sm p-4 rounded-xl shadow-lg border border-slate-200 flex justify-between items-center">
+          <div>
+            <button type="button" phx-click="show_clear_confirm" class="px-4 py-2 bg-red-50 hover:bg-red-100 text-red-600 text-sm font-semibold rounded-lg transition border border-red-100">
+              Clear All Sync Data
+            </button>
+          </div>
+          <div class="flex gap-4">
+            <a href="/" class="px-6 py-3 text-slate-600 font-semibold rounded-lg hover:bg-slate-100 transition">Cancel</a>
+            <button type="submit" class="px-10 py-3 bg-indigo-600 hover:bg-indigo-700 text-white font-bold rounded-lg shadow-md transition transform active:scale-95">
+              Save All Settings
+            </button>
+          </div>
         </div>
       </form>
+
+      <!-- Confirmation Modal -->
+      <%= if @show_clear_confirm do %>
+        <div class="fixed inset-0 bg-slate-900/50 backdrop-blur-sm z-[100] flex items-center justify-center p-4">
+          <div class="bg-white rounded-2xl shadow-2xl border border-slate-200 max-w-md w-full p-8">
+            <div class="w-16 h-16 bg-red-100 rounded-full flex items-center justify-center mb-6 mx-auto">
+              <svg class="w-8 h-8 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+              </svg>
+            </div>
+            <h3 class="text-xl font-bold text-center text-slate-900 mb-2">Clear All Sync Data?</h3>
+            <p class="text-slate-500 text-center mb-8">
+              This will delete all sync logs, reset meter tracking, and clear pending writes. 
+              The system will re-sync everything from scratch on the next scheduled run. 
+              This cannot be undone.
+            </p>
+            <div class="flex flex-col gap-3">
+              <button 
+                phx-click="confirm_clear_data" 
+                class="w-full py-3 bg-red-600 hover:bg-red-700 text-white font-bold rounded-xl shadow-lg transition"
+              >
+                Yes, Clear Everything
+              </button>
+              <button 
+                phx-click="cancel_clear" 
+                class="w-full py-3 bg-slate-100 hover:bg-slate-200 text-slate-700 font-semibold rounded-xl transition"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      <% end %>
     </div>
     """
   end

@@ -83,4 +83,26 @@ defmodule SmtInfluxSync.SyncMetadata do
     |> limit(^limit)
     |> Repo.all()
   end
+
+  def clear_all_sync_data do
+    Repo.transaction(fn ->
+      Repo.delete_all(SyncLog)
+      Repo.update_all(SmtInfluxSync.Meter, set: [
+        last_interval_at: nil,
+        last_daily_at: nil,
+        last_monthly_at: nil,
+        last_odr_at: nil
+      ])
+      Repo.delete_all(SmtInfluxSync.PendingWrite)
+      
+      # Clear file-based caches if they exist
+      Enum.each(~w(daily interval monthly odr ynab), fn source ->
+        path = Config.last_sync_path(source)
+        if File.exists?(path), do: File.rm(path)
+      end)
+      
+      odr_count_path = Config.odr_daily_count_path()
+      if File.exists?(odr_count_path), do: File.rm(odr_count_path)
+    end)
+  end
 end
