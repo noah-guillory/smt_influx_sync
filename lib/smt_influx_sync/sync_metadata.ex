@@ -1,6 +1,6 @@
 defmodule SmtInfluxSync.SyncMetadata do
   import Ecto.Query
-  alias SmtInfluxSync.{Repo, SyncLog}
+  alias SmtInfluxSync.{Config, Repo, SyncLog}
 
   def log_start(source, message \\ nil) do
     log = %SyncLog{}
