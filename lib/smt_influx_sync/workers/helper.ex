@@ -185,8 +185,8 @@ defmodule SmtInfluxSync.Workers.Helper do
       {:ok, timestamp} ->
         fields = %{
           actl_kwh_usg: actl_kwh / 1.0,
-          mtrd_kwh_usg: record["mtrd_kwh_usg"] / 1.0,
-          blld_kwh_usg: record["blld_kwh_usg"] / 1.0
+          mtrd_kwh_usg: (record["mtrd_kwh_usg"] || 0) / 1.0,
+          blld_kwh_usg: (record["blld_kwh_usg"] || 0) / 1.0
         }
 
         {:ok, fields, timestamp}

@@ -54,7 +54,7 @@ if config_env() != :test do
     database: database_path,
     pool_size: String.to_integer(System.get_env("POOL_SIZE") || "5"),
     stacktrace: true,
-    show_sensitive_data_on_connection_error: true,
+    show_sensitive_data_on_connection_error: false,
     busy_timeout: 5000,
     journal_mode: :wal,
     cache_size: -64000,

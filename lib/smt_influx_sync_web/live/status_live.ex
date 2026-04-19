@@ -124,7 +124,10 @@ defmodule SmtInfluxSyncWeb.StatusLive do
         case latest_log do
           nil -> 
             path = Config.last_sync_path(source)
-            if File.exists?(path), do: File.read!(path) |> String.trim(), else: "Never"
+            case File.read(path) do
+              {:ok, contents} -> String.trim(contents)
+              _ -> "Never"
+            end
           log -> 
             format_dt(log.completed_at)
         end

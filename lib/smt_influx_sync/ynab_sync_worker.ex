@@ -252,28 +252,6 @@ defmodule SmtInfluxSync.YnabSyncWorker do
   end
 
   defp ping_healthcheck(signal) do
-    case Config.ynab_healthchecks_ping_url() do
-      nil ->
-        :ok
-
-      base_url ->
-        url =
-          case signal do
-            :start -> "#{base_url}/start"
-            :success -> base_url
-            :fail -> "#{base_url}/fail"
-          end
-
-        case Req.get(url, retry: false) do
-          {:ok, %{status: status}} when status in 200..299 ->
-            Logger.debug("[ynab] [healthchecks] Pinged #{signal}")
-
-          {:ok, %{status: status}} ->
-            Logger.warning("[ynab] [healthchecks] Ping #{signal} returned HTTP #{status}")
-
-          {:error, reason} ->
-            Logger.warning("[ynab] [healthchecks] Ping #{signal} failed: #{inspect(reason)}")
-        end
-    end
+    SmtInfluxSync.Workers.Helper.ping_healthcheck(signal, Config.ynab_healthchecks_ping_url())
   end
 end

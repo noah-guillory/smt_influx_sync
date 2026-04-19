@@ -68,7 +68,7 @@ defmodule SmtInfluxSync.Workers.ODR do
               end
             end)
 
-          if Enum.all?(results, &(&1 == :ok or &1 == :daily_limit_reached)) do
+          if Enum.all?(results, &(&1 == :ok)) do
              Helper.save_last_sync_now("odr")
              Helper.ping_healthcheck(:success, Config.healthchecks_ping_url())
           end
