@@ -27,11 +27,25 @@ defmodule SmtInfluxSync.Workers.ODR do
               sync_log = SmtInfluxSync.SyncMetadata.log_start("odr", "ESIID: #{meter.esiid}")
               started_at = System.monotonic_time(:millisecond)
 
-              case do_sync(token, meter) do
+              sync_result =
+                case do_sync(token, meter) do
+                  {:error, :unauthorized} ->
+                    Logger.warning("[odr] Unauthorized, refreshing token and retrying")
+                    with :ok <- Session.refresh_token(),
+                         {:ok, new_token} <- Session.get_token() do
+                      do_sync(new_token, meter)
+                    else
+                      {:error, reason} -> {:error, reason}
+                    end
+                  other ->
+                    other
+                end
+
+              case sync_result do
                 {:ok, timestamp} ->
                   elapsed = System.monotonic_time(:millisecond) - started_at
                   Logger.info("[odr] Sync completed successfully in #{elapsed}ms")
-                  
+
                   latest_dt = if timestamp, do: DateTime.from_unix!(timestamp), else: nil
                   SmtInfluxSync.SyncMetadata.log_success(sync_log, "Fetched 1 record in #{elapsed}ms", nil, latest_dt)
                   if timestamp, do: SmtInfluxSync.Meter.update_last_data_point(meter.id, "odr", timestamp)
@@ -47,11 +61,6 @@ defmodule SmtInfluxSync.Workers.ODR do
                   SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Daily limit reached")
                   :ok # Don't retry, just wait for next day
 
-                {:error, :unauthorized} ->
-                  Session.refresh_token()
-                  SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Unauthorized, token refreshed")
-                  {:error, :unauthorized}
-
                 {:error, reason} ->
                   Logger.error("[odr] Sync failed: #{inspect(reason)}")
                   SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Sync failed: #{inspect(reason)}")
@@ -66,8 +75,8 @@ defmodule SmtInfluxSync.Workers.ODR do
 
           schedule_next()
           
-          if Enum.any?(results, &(&1 == {:error, :unauthorized})) do
-            {:error, :unauthorized}
+          if Enum.any?(results, fn r -> match?({:error, _}, r) end) do
+            {:error, :sync_failed}
           else
             :ok
           end

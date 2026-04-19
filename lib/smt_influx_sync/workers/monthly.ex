@@ -41,20 +41,29 @@ defmodule SmtInfluxSync.Workers.Monthly do
               sync_log = SmtInfluxSync.SyncMetadata.log_start("monthly", if(custom_range, do: "ESIID: #{meter.esiid}, Range: #{args["start_date"]} to #{args["end_date"]}", else: "ESIID: #{meter.esiid}"))
               started_at = System.monotonic_time(:millisecond)
 
-              case do_sync(token, meter, custom_range) do
+              sync_result =
+                case do_sync(token, meter, custom_range) do
+                  {:error, :unauthorized} ->
+                    Logger.warning("[monthly] Unauthorized, refreshing token and retrying")
+                    with :ok <- Session.refresh_token(),
+                         {:ok, new_token} <- Session.get_token() do
+                      do_sync(new_token, meter, custom_range)
+                    else
+                      {:error, reason} -> {:error, reason}
+                    end
+                  other ->
+                    other
+                end
+
+              case sync_result do
                 {:ok, max_ts, count} ->
                   elapsed = System.monotonic_time(:millisecond) - started_at
                   Logger.info("[monthly] Sync completed successfully in #{elapsed}ms")
-                  
+
                   latest_dt = if max_ts, do: DateTime.from_unix!(max_ts), else: nil
                   SmtInfluxSync.SyncMetadata.log_success(sync_log, "Fetched #{count} records in #{elapsed}ms", nil, latest_dt)
                   if max_ts, do: SmtInfluxSync.Meter.update_last_data_point(meter.id, "monthly", max_ts)
                   :ok
-
-                {:error, :unauthorized} ->
-                  Session.refresh_token()
-                  SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Unauthorized, token refreshed")
-                  {:error, :unauthorized}
 
                 {:error, reason} ->
                   Logger.error("[monthly] Sync failed: #{inspect(reason)}")
@@ -65,8 +74,8 @@ defmodule SmtInfluxSync.Workers.Monthly do
 
           unless Enum.any?(args, fn {k, _} -> k in ["start_date", "end_date"] end), do: schedule_next()
 
-          if Enum.any?(results, &(&1 == {:error, :unauthorized})) do
-            {:error, :unauthorized}
+          if Enum.any?(results, fn r -> match?({:error, _}, r) end) do
+            {:error, :sync_failed}
           else
             :ok
           end
