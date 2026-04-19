@@ -18,7 +18,7 @@ defmodule SmtInfluxSync.YnabSyncWorker do
          :ok <- update_ynab_target(average_kwh) do
       elapsed_ms = System.monotonic_time(:millisecond) - started_at
       Logger.info("[ynab] Sync completed successfully in #{elapsed_ms}ms")
-      SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed_ms}ms")
+      SmtInfluxSync.SyncMetadata.log_success(sync_log, "Sync completed in #{elapsed_ms}ms", nil, nil, elapsed_ms)
       SmtInfluxSync.Workers.Helper.save_last_sync_now("ynab")
       ping_healthcheck(:success)
       schedule_next()

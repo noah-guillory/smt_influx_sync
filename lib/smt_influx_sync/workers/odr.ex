@@ -47,7 +47,7 @@ defmodule SmtInfluxSync.Workers.ODR do
                   Logger.info("[odr] Sync completed successfully in #{elapsed}ms")
 
                   latest_dt = if timestamp, do: DateTime.from_unix!(timestamp), else: nil
-                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Fetched 1 record in #{elapsed}ms", nil, latest_dt)
+                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Fetched 1 record in #{elapsed}ms", nil, latest_dt, elapsed)
                   if timestamp, do: SmtInfluxSync.Meter.update_last_data_point(meter.id, "odr", timestamp)
                   :ok
 

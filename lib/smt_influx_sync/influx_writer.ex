@@ -53,7 +53,8 @@ defmodule SmtInfluxSync.InfluxWriter do
         healthy: true,
         last_write_at: nil,
         last_write_status: nil,
-        buffer_history: []
+        buffer_history: [],
+        write_latency_history: []
       }}
   end
 
@@ -62,14 +63,18 @@ defmodule SmtInfluxSync.InfluxWriter do
     entry = {measurement, tags, fields, timestamp}
 
     if state.healthy and pending_count() == 0 do
-      case do_write(entry) do
+      start = System.monotonic_time(:millisecond)
+      result = do_write(entry)
+      latency_ms = System.monotonic_time(:millisecond) - start
+
+      case result do
         :ok ->
-          {:reply, :ok, update_state_success(state)}
+          {:reply, :ok, update_state_success(state, latency_ms)}
 
         {:error, reason} ->
           Logger.warning("InfluxDB write failed (#{inspect(reason)}), queuing for retry")
           enqueue(entry)
-          {:reply, :ok, update_state_fail(state, reason)}
+          {:reply, :ok, update_state_fail(state, reason, latency_ms)}
       end
     else
       enqueue(entry)
@@ -86,8 +91,8 @@ defmodule SmtInfluxSync.InfluxWriter do
   @impl true
   def handle_call(:get_status, _from, state) do
     one_minute_ago = DateTime.add(DateTime.utc_now(), -60)
-    
-    growth = 
+
+    growth =
       case Enum.filter(state.buffer_history, fn {ts, _} -> DateTime.compare(ts, one_minute_ago) != :lt end) do
         history when length(history) >= 2 ->
           {_, latest} = List.first(history)
@@ -96,12 +101,29 @@ defmodule SmtInfluxSync.InfluxWriter do
         _ -> 0
       end
 
+    latency_stats =
+      case state.write_latency_history do
+        [] ->
+          nil
+
+        samples ->
+          values = Enum.map(samples, fn {_, ms} -> ms end)
+          n = length(values)
+          %{
+            min: Enum.min(values),
+            max: Enum.max(values),
+            avg: round(Enum.sum(values) / n),
+            samples: n
+          }
+      end
+
     status = %{
       healthy: state.healthy,
       pending_count: pending_count(),
       last_write_at: state.last_write_at,
       last_write_status: state.last_write_status,
-      buffer_growth: growth
+      buffer_growth: growth,
+      write_latency: latency_stats
     }
 
     {:reply, status, state}
@@ -125,12 +147,19 @@ defmodule SmtInfluxSync.InfluxWriter do
 
   # --- Private ---
 
-  defp update_state_success(state) do
-    %{state | healthy: true, last_write_at: DateTime.utc_now(), last_write_status: :ok}
+  defp update_state_success(state, latency_ms) do
+    state = %{state | healthy: true, last_write_at: DateTime.utc_now(), last_write_status: :ok}
+    if latency_ms, do: record_latency(state, latency_ms), else: state
   end
 
-  defp update_state_fail(state, reason) do
-    %{state | healthy: false, last_write_at: DateTime.utc_now(), last_write_status: {:error, reason}}
+  defp update_state_fail(state, reason, latency_ms) do
+    state = %{state | healthy: false, last_write_at: DateTime.utc_now(), last_write_status: {:error, reason}}
+    if latency_ms, do: record_latency(state, latency_ms), else: state
+  end
+
+  defp record_latency(state, latency_ms) do
+    history = [{DateTime.utc_now(), latency_ms} | Enum.take(state.write_latency_history, 99)]
+    %{state | write_latency_history: history}
   end
 
   defp flush_pending(state) do
@@ -139,29 +168,31 @@ defmodule SmtInfluxSync.InfluxWriter do
 
     if pending_chunk != [] do
       Logger.info("Flushing #{length(pending_chunk)} pending write(s) from SQLite")
-      
+
       body =
         pending_chunk
         |> Enum.map(fn p -> build_line(p.measurement, p.tags, p.fields, p.timestamp) end)
         |> Enum.join("\n")
 
-      case do_write_lines(body) do
+      {result, latency_ms} = timed_write_lines(body)
+
+      case result do
         :ok ->
           ids = Enum.map(pending_chunk, & &1.id)
           from(p in PendingWrite, where: p.id in ^ids) |> Repo.delete_all()
-          
+
           # Continue flushing if there's more
           if pending_count() > 0 do
-            flush_pending(update_state_success(state))
+            flush_pending(update_state_success(state, latency_ms))
           else
-            update_state_success(state)
+            update_state_success(state, latency_ms)
           end
 
         {:error, reason} ->
           Logger.warning(
             "InfluxDB still unhealthy during flush (#{inspect(reason)}), will retry in #{@retry_interval_ms}ms"
           )
-          update_state_fail(state, reason)
+          update_state_fail(state, reason, latency_ms)
       end
     else
       %{state | healthy: true}
@@ -177,9 +208,11 @@ defmodule SmtInfluxSync.InfluxWriter do
         if ok do
           body = chunk |> Enum.map(&build_line_from_entry/1) |> Enum.join("\n")
 
-          case do_write_lines(body) do
+          {result, latency_ms} = timed_write_lines(body)
+
+          case result do
             :ok ->
-              {update_state_success(acc_state), true}
+              {update_state_success(acc_state, latency_ms), true}
 
             {:error, reason} ->
               Logger.warning(
@@ -187,7 +220,7 @@ defmodule SmtInfluxSync.InfluxWriter do
               )
 
               Enum.each(chunk, &enqueue/1)
-              {update_state_fail(acc_state, reason), false}
+              {update_state_fail(acc_state, reason, latency_ms), false}
           end
         else
           Enum.each(chunk, &enqueue/1)
@@ -202,6 +235,12 @@ defmodule SmtInfluxSync.InfluxWriter do
 
   defp do_write(entry) do
     do_write_lines(build_line_from_entry(entry))
+  end
+
+  defp timed_write_lines(body) do
+    start = System.monotonic_time(:millisecond)
+    result = do_write_lines(body)
+    {result, System.monotonic_time(:millisecond) - start}
   end
 
   defp do_write_lines(body) do

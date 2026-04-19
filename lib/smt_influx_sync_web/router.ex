@@ -12,11 +12,21 @@ defmodule SmtInfluxSyncWeb.Router do
     plug :put_secure_browser_headers
   end
 
+  pipeline :api do
+    plug :accepts, ["json"]
+  end
+
   scope "/", SmtInfluxSyncWeb do
     pipe_through :browser
 
     live "/", StatusLive, :index
     live "/settings", SettingsLive, :index
     live_dashboard "/dashboard", metrics: SmtInfluxSyncWeb.Telemetry
+  end
+
+  scope "/", SmtInfluxSyncWeb do
+    pipe_through :api
+
+    get "/healthz", HealthController, :index
   end
 end

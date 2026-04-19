@@ -16,14 +16,15 @@ defmodule SmtInfluxSync.SyncMetadata do
     log
   end
 
-  def log_success(log, message \\ nil, details \\ nil, latest_data_point \\ nil) do
+  def log_success(log, message \\ nil, details \\ nil, latest_data_point \\ nil, elapsed_ms \\ nil) do
     log = log
     |> SyncLog.changeset(%{
       status: "success",
       completed_at: DateTime.utc_now(),
       message: message,
       details: details,
-      latest_data_point: latest_data_point
+      latest_data_point: latest_data_point,
+      elapsed_ms: elapsed_ms
     })
     |> Repo.update!()
 
@@ -82,6 +83,34 @@ defmodule SmtInfluxSync.SyncMetadata do
     |> order_by([l], desc: l.inserted_at)
     |> limit(^limit)
     |> Repo.all()
+  end
+
+  @doc """
+  Returns p50/p95/avg duration stats for successful syncs of a given source
+  over the last `days` days. Returns nil if fewer than 2 samples exist.
+  """
+  def get_duration_stats(source, days \\ 7) do
+    cutoff = DateTime.add(DateTime.utc_now(), -days * 24 * 60 * 60)
+
+    values =
+      SyncLog
+      |> where([l], l.source == ^source and l.status == "success")
+      |> where([l], not is_nil(l.elapsed_ms))
+      |> where([l], l.completed_at >= ^cutoff)
+      |> select([l], l.elapsed_ms)
+      |> Repo.all()
+
+    case length(values) do
+      n when n < 2 ->
+        nil
+
+      n ->
+        sorted = Enum.sort(values)
+        avg = round(Enum.sum(sorted) / n)
+        p50 = Enum.at(sorted, div(n, 2))
+        p95 = Enum.at(sorted, min(trunc(n * 0.95), n - 1))
+        %{avg: avg, p50: p50, p95: p95, count: n}
+    end
   end
 
   def clear_all_sync_data do

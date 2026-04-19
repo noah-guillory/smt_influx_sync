@@ -61,7 +61,7 @@ defmodule SmtInfluxSync.Workers.Daily do
                   Logger.info("[daily] Sync completed successfully in #{elapsed}ms")
 
                   latest_dt = if max_ts, do: DateTime.from_unix!(max_ts), else: nil
-                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Fetched #{count} records in #{elapsed}ms", nil, latest_dt)
+                  SmtInfluxSync.SyncMetadata.log_success(sync_log, "Fetched #{count} records in #{elapsed}ms", nil, latest_dt, elapsed)
                   if max_ts, do: SmtInfluxSync.Meter.update_last_data_point(meter.id, "daily", max_ts)
                   :ok
 

@@ -2,6 +2,8 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   use SmtInfluxSyncWeb, :live_view
   alias SmtInfluxSync.Config
 
+  @log_page_size 50
+
   @impl true
   def mount(_params, _session, socket) do
     if connected?(socket) do
@@ -10,13 +12,20 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       Phoenix.PubSub.subscribe(SmtInfluxSync.PubSub, "system_logs")
     end
 
-    {:ok, assign_data(socket) |> assign(system_logs: [], active_tab: "history")}
+    {:ok,
+     assign_data(socket)
+     |> assign(
+       active_tab: "history",
+       log_level_filter: "all",
+       system_logs_limit: @log_page_size
+     )
+     |> load_system_logs()}
   end
 
   @impl true
-  def handle_info({:log_event, log}, socket) do
-    logs = [log | Enum.take(socket.assigns.system_logs, 49)]
-    {:noreply, assign(socket, system_logs: logs)}
+  def handle_info({:log_event, _log}, socket) do
+    # Re-fetch from DB so the tab reflects the persisted log even after refresh
+    {:noreply, load_system_logs(socket)}
   end
 
   @impl true
@@ -79,6 +88,32 @@ defmodule SmtInfluxSyncWeb.StatusLive do
     {:noreply, assign(socket, active_tab: tab)}
   end
 
+  @impl true
+  def handle_event("set_log_filter", %{"level" => level}, socket) do
+    {:noreply,
+     socket
+     |> assign(log_level_filter: level, system_logs_limit: @log_page_size)
+     |> load_system_logs()}
+  end
+
+  @impl true
+  def handle_event("load_more_logs", _params, socket) do
+    new_limit = socket.assigns.system_logs_limit + @log_page_size
+    {:noreply, socket |> assign(system_logs_limit: new_limit) |> load_system_logs()}
+  end
+
+  defp load_system_logs(socket) do
+    logs = SmtInfluxSync.SystemLog.list_recent(
+      socket.assigns.system_logs_limit,
+      socket.assigns.log_level_filter
+    )
+    assign(socket, system_logs: logs)
+  end
+
+  defp format_ms(nil), do: "—"
+  defp format_ms(ms) when ms < 1_000, do: "#{ms}ms"
+  defp format_ms(ms), do: "#{Float.round(ms / 1000, 1)}s"
+
   defp format_dt(nil), do: "Never"
   defp format_dt(%NaiveDateTime{} = ndt) do
     ndt
@@ -108,8 +143,17 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       sync_status: fetch_sync_status(),
       influx_status: SmtInfluxSync.InfluxWriter.get_status(),
       recent_logs: SmtInfluxSync.SyncMetadata.list_recent_logs(10),
+      duration_stats: fetch_duration_stats(),
       meters: SmtInfluxSync.Meter.list_all()
     )
+  end
+
+  defp fetch_duration_stats do
+    ~w(daily interval monthly odr ynab)
+    |> Enum.map(fn source ->
+      {source, SmtInfluxSync.SyncMetadata.get_duration_stats(source)}
+    end)
+    |> Enum.into(%{})
   end
 
   defp fetch_sync_status do
@@ -119,20 +163,20 @@ defmodule SmtInfluxSyncWeb.StatusLive do
     ~w(daily interval monthly odr ynab)
     |> Enum.map(fn source ->
       latest_log = SmtInfluxSync.SyncMetadata.get_latest_sync(source)
-      
-      last_sync = 
+
+      last_sync =
         case latest_log do
-          nil -> 
+          nil ->
             path = Config.last_sync_path(source)
             case File.read(path) do
               {:ok, contents} -> String.trim(contents)
               _ -> "Never"
             end
-          log -> 
+          log ->
             format_dt(log.completed_at)
         end
 
-      latest_data_point = 
+      latest_data_point =
         case SmtInfluxSync.SyncMetadata.get_latest_data_point(source) do
           nil -> "Never"
           dt -> format_dt(dt)
@@ -152,10 +196,10 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       next_sync_dt = DateTime.add(now, ms_until, :millisecond)
       next_sync = format_time(next_sync_dt)
 
-      is_stale = 
+      is_stale =
         case latest_log do
           %{completed_at: completed_at} ->
-            stale_threshold = 
+            stale_threshold =
               case source do
                 "interval" -> 120 # 2 hours
                 "daily" -> 48 * 60 # 48 hours
@@ -258,6 +302,19 @@ defmodule SmtInfluxSyncWeb.StatusLive do
                 <% end %>
               </dd>
             </div>
+            <div class="flex justify-between border-b border-slate-100 pb-2">
+              <dt class="text-slate-500">Write Latency</dt>
+              <dd class="font-medium text-slate-900 text-sm">
+                <%= if @influx_status.write_latency do %>
+                  avg <%= format_ms(@influx_status.write_latency.avg) %> &middot;
+                  min <%= format_ms(@influx_status.write_latency.min) %> &middot;
+                  max <%= format_ms(@influx_status.write_latency.max) %>
+                  <span class="text-xs text-slate-400 ml-1">(<%= @influx_status.write_latency.samples %> samples)</span>
+                <% else %>
+                  <span class="text-slate-400">No data yet</span>
+                <% end %>
+              </dd>
+            </div>
           </dl>
           <div class="mt-6">
             <a href="/dashboard" class="block w-full text-center px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 rounded-lg transition">
@@ -294,6 +351,20 @@ defmodule SmtInfluxSyncWeb.StatusLive do
         </div>
 
         <%= if @active_tab == "history" do %>
+          <%!-- Duration stats summary --%>
+          <div class="grid grid-cols-2 md:grid-cols-5 gap-3 mb-6">
+            <%= for source <- ~w(daily interval monthly odr ynab) do %>
+              <div class="bg-slate-50 rounded-lg p-3 border border-slate-100">
+                <div class="text-xs font-semibold text-slate-500 uppercase mb-1"><%= source %></div>
+                <%= if stats = @duration_stats[source] do %>
+                  <div class="text-xs text-slate-700">avg <span class="font-medium"><%= format_ms(stats.avg) %></span></div>
+                  <div class="text-xs text-slate-500">p95 <%= format_ms(stats.p95) %> &middot; n=<%= stats.count %></div>
+                <% else %>
+                  <div class="text-xs text-slate-400 italic">No data</div>
+                <% end %>
+              </div>
+            <% end %>
+          </div>
           <div class="overflow-x-auto">
             <table class="w-full text-left">
               <thead>
@@ -301,6 +372,7 @@ defmodule SmtInfluxSyncWeb.StatusLive do
                   <th class="pb-3 font-medium">Source</th>
                   <th class="pb-3 font-medium">Status</th>
                   <th class="pb-3 font-medium">Time</th>
+                  <th class="pb-3 font-medium">Duration</th>
                   <th class="pb-3 font-medium">Message</th>
                 </tr>
               </thead>
@@ -321,6 +393,9 @@ defmodule SmtInfluxSyncWeb.StatusLive do
                     <td class="py-3 text-slate-500 text-sm">
                       <%= format_dt(log.inserted_at) %>
                     </td>
+                    <td class="py-3 text-slate-500 text-sm font-mono">
+                      <%= format_ms(log.elapsed_ms) %>
+                    </td>
                     <td class="py-3 text-slate-600 text-sm truncate max-w-xs">
                       <%= log.message %>
                     </td>
@@ -330,24 +405,53 @@ defmodule SmtInfluxSyncWeb.StatusLive do
             </table>
           </div>
         <% else %>
+          <%!-- Level filter buttons --%>
+          <div class="flex gap-2 mb-4">
+            <%= for level <- ~w(all info warning error debug) do %>
+              <button
+                phx-click="set_log_filter"
+                phx-value-level={level}
+                class={[
+                  "px-3 py-1 rounded-full text-xs font-semibold border transition",
+                  @log_level_filter == level && "bg-indigo-600 text-white border-indigo-600",
+                  @log_level_filter != level && "bg-white text-slate-500 border-slate-200 hover:border-indigo-300"
+                ]}
+              >
+                <%= String.capitalize(level) %>
+              </button>
+            <% end %>
+          </div>
           <div class="bg-slate-900 rounded-lg p-4 font-mono text-xs overflow-y-auto max-h-96 space-y-1">
             <%= for log <- @system_logs do %>
               <div class="flex gap-3">
-                <span class="text-slate-500"><%= Calendar.strftime(log.timestamp, "%H:%M:%S") %></span>
+                <span class="text-slate-500 shrink-0"><%= Calendar.strftime(log.inserted_at, "%H:%M:%S") %></span>
                 <span class={[
-                  "font-bold uppercase w-12",
-                  log.level == :info && "text-blue-400",
-                  log.level == :warning && "text-yellow-400",
-                  log.level == :error && "text-red-400",
-                  log.level == :debug && "text-slate-400"
+                  "font-bold uppercase w-12 shrink-0",
+                  log.level == "info" && "text-blue-400",
+                  log.level == "warning" && "text-yellow-400",
+                  log.level == "error" && "text-red-400",
+                  log.level == "debug" && "text-slate-400"
                 ]}><%= log.level %></span>
-                <span class="text-slate-300"><%= log.message %></span>
+                <%= if log.source do %>
+                  <span class="text-slate-500 shrink-0">[<%= log.source %>]</span>
+                <% end %>
+                <span class="text-slate-300 break-all"><%= log.message %></span>
               </div>
             <% end %>
             <%= if @system_logs == [] do %>
-              <div class="text-slate-500 italic">Waiting for logs...</div>
+              <div class="text-slate-500 italic">No logs found.</div>
             <% end %>
           </div>
+          <%= if length(@system_logs) >= @system_logs_limit do %>
+            <div class="mt-3 text-center">
+              <button
+                phx-click="load_more_logs"
+                class="text-sm px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded transition"
+              >
+                Load More
+              </button>
+            </div>
+          <% end %>
         <% end %>
       </div>
 
