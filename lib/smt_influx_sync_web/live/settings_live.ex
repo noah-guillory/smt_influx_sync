@@ -88,7 +88,8 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
         "smt_username", "smt_password", "smt_esiid",
         "influx_url", "influx_token", "influx_org", "influx_bucket",
         "ynab_access_token", "ynab_budget_id", "ynab_category_id", "kwh_rate",
-        "odr_sync_time", "interval_sync_time", "daily_sync_time", "monthly_sync_time", "ynab_sync_time"
+        "odr_sync_time", "interval_sync_time", "daily_sync_time", "monthly_sync_time", "ynab_sync_time",
+        "discord_webhook_url", "slack_webhook_url", "healthchecks_ping_url"
       ])
       |> Map.new(fn {k, v} -> {String.to_atom(k), parse_value(k, v)} end)
       |> Map.put(:kwh_tiers, tiers)
@@ -98,6 +99,9 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
   end
 
   defp parse_value("kwh_rate", v), do: parse_float_safe(v)
+  defp parse_value(k, v) when k in ["discord_webhook_url", "slack_webhook_url", "healthchecks_ping_url"] do
+    if String.trim(v) == "", do: nil, else: String.trim(v)
+  end
   defp parse_value(_, v), do: v
 
   defp parse_float_safe(v) do
@@ -160,7 +164,10 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
         interval_sync_time: Config.interval_sync_time(),
         daily_sync_time: Config.daily_sync_time(),
         monthly_sync_time: Config.monthly_sync_time(),
-        ynab_sync_time: Config.ynab_sync_time()
+        ynab_sync_time: Config.ynab_sync_time(),
+        discord_webhook_url: Config.discord_webhook_url() || "",
+        slack_webhook_url: Config.slack_webhook_url() || "",
+        healthchecks_ping_url: Config.healthchecks_ping_url() || ""
       }
     )
   end
@@ -396,6 +403,37 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
             <div>
               <label class="block text-sm font-medium text-slate-700 mb-1">YNAB Sync Time</label>
               <input type="text" name="ynab_sync_time" value={@config.ynab_sync_time} placeholder="03:00" class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+            </div>
+          </div>
+        </div>
+
+        <!-- Notifications -->
+        <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200">
+          <h2 class="text-xl font-semibold mb-6 text-slate-700 flex items-center gap-2">
+            <svg class="w-5 h-5 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+            Notifications
+          </h2>
+          <p class="text-sm text-slate-500 mb-6">Configure webhooks to receive alerts when data goes stale. Leave blank to disable.</p>
+          <div class="grid grid-cols-1 gap-6">
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Discord Webhook URL</label>
+              <input type="text" name="discord_webhook_url" value={@config.discord_webhook_url}
+                placeholder="https://discord.com/api/webhooks/..."
+                class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 font-mono text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Slack Webhook URL</label>
+              <input type="text" name="slack_webhook_url" value={@config.slack_webhook_url}
+                placeholder="https://hooks.slack.com/services/..."
+                class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 font-mono text-sm" />
+            </div>
+            <div>
+              <label class="block text-sm font-medium text-slate-700 mb-1">Healthchecks.io Ping URL</label>
+              <input type="text" name="healthchecks_ping_url" value={@config.healthchecks_ping_url}
+                placeholder="https://hc-ping.com/..."
+                class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500 font-mono text-sm" />
             </div>
           </div>
         </div>

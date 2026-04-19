@@ -52,7 +52,10 @@ defmodule SmtInfluxSync.ConfigManager do
       interval_sync_time: Application.get_env(@app, :interval_sync_time),
       daily_sync_time: Application.get_env(@app, :daily_sync_time),
       monthly_sync_time: Application.get_env(@app, :monthly_sync_time),
-      ynab_sync_time: Application.get_env(@app, :ynab_sync_time)
+      ynab_sync_time: Application.get_env(@app, :ynab_sync_time),
+      discord_webhook_url: Application.get_env(@app, :discord_webhook_url),
+      slack_webhook_url: Application.get_env(@app, :slack_webhook_url),
+      healthchecks_ping_url: Application.get_env(@app, :healthchecks_ping_url)
     }
     
     save_overrides(initial_config)
