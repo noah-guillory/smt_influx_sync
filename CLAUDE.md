@@ -30,7 +30,7 @@ docker run --env-file .env -v smt_data:/data smt_influx_sync
 - `SmtInfluxSync.ConfigManager` — Runtime config wrapper
 - `Oban` — Job scheduler for periodic sync workers
 - `SmtInfluxSyncWeb.Endpoint` — Phoenix/Bandit web server
-- `SmtInfluxSync.InfluxWriter` — GenServer managing InfluxDB writes with DETS-backed queue
+- `SmtInfluxSync.InfluxWriter` — GenServer managing InfluxDB writes with SQLite-backed retry queue
 - `SmtInfluxSync.SMT.Session` — Supervisor (`:rest_for_one`) for SMT auth + workers
 
 ### SMT Session Supervisor
@@ -41,7 +41,7 @@ docker run --env-file .env -v smt_data:/data smt_influx_sync
 
 ### Key Design Patterns
 
-**Resilient InfluxDB writes:** `InfluxWriter` queues failed writes to a DETS file on disk. On recovery, it retries and batch-flushes up to 5,000 points per request.
+**Resilient InfluxDB writes:** `InfluxWriter` queues failed writes to the SQLite `PendingWrite` table. On recovery, it retries and batch-flushes up to 5,000 points per request.
 
 **Session token persistence:** SMT auth tokens are saved to `/data/smt_token` to survive restarts. Discovered meters are stored in SQLite.
 
@@ -63,7 +63,7 @@ All config is environment-driven via `config/runtime.exs`. Key env vars:
 - SMT: `SMT_USERNAME`, `SMT_PASSWORD`, `SMT_ESIID`, `SMT_METER_NUMBER`
 - InfluxDB: `INFLUX_URL`, `INFLUX_TOKEN`, `INFLUX_ORG`, `INFLUX_BUCKET`
 - Sync times (cron-style): `ODR_SYNC_TIME` (default 02:00), `INTERVAL_SYNC_TIME` (02:30), etc.
-- `DATA_DIR` — base path for DETS queue and token file (default `/tmp/smt_influx_sync_data`)
+- `DATA_DIR` — base path for SQLite DB, token file, and sync state (default `/tmp/smt_influx_sync_data`)
 - YNAB (optional): `YNAB_ACCESS_TOKEN`, `YNAB_BUDGET_ID`, `YNAB_CATEGORY_ID`, `KWH_RATE`
 - Monitoring: `HEALTHCHECKS_PING_URL`, `DISCORD_WEBHOOK_URL` (or Slack)
 

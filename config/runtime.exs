@@ -40,8 +40,6 @@ config :smt_influx_sync,
 if config_env() != :test do
   config :smt_influx_sync,
     data_dir: System.get_env("DATA_DIR", "/tmp/smt_influx_sync_data"),
-    pending_writes_path:
-      System.get_env("PENDING_WRITES_PATH", "/tmp/smt_influx_sync_data/influx_pending_writes.dets"),
     token_path: System.get_env("TOKEN_PATH", "/tmp/smt_influx_sync_data/smt_token")
 end
 

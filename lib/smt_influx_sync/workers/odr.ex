@@ -57,9 +57,9 @@ defmodule SmtInfluxSync.Workers.ODR do
                   {:error, :rate_limited}
 
                 {:error, :daily_limit_reached} ->
-                  Logger.warning("[odr] Daily limit reached, retrying tomorrow")
+                  Logger.warning("[odr] Daily limit reached, scheduling retry at midnight")
                   SmtInfluxSync.SyncMetadata.log_fail(sync_log, "Daily limit reached")
-                  :ok # Don't retry, just wait for next day
+                  :daily_limit_reached
 
                 {:error, reason} ->
                   Logger.error("[odr] Sync failed: #{inspect(reason)}")
@@ -68,13 +68,19 @@ defmodule SmtInfluxSync.Workers.ODR do
               end
             end)
 
-          if Enum.all?(results, &(&1 == :ok)) do
+          limit_hit = Enum.any?(results, &(&1 == :daily_limit_reached))
+
+          if Enum.all?(results, fn r -> r == :ok or r == :daily_limit_reached end) do
              Helper.save_last_sync_now("odr")
              Helper.ping_healthcheck(:success, Config.healthchecks_ping_url())
           end
 
-          schedule_next()
-          
+          if limit_hit do
+            schedule_next_at_midnight()
+          else
+            schedule_next()
+          end
+
           if Enum.any?(results, fn r -> match?({:error, _}, r) end) do
             {:error, :sync_failed}
           else
@@ -91,7 +97,21 @@ defmodule SmtInfluxSync.Workers.ODR do
   def schedule_next do
     {h, m} = Config.parse_time_string(Config.odr_sync_time())
     ms = Helper.ms_until_next_time(h, m)
-    
+
+    %{}
+    |> __MODULE__.new(scheduled_at: DateTime.add(DateTime.utc_now(), ms, :millisecond))
+    |> Oban.insert!()
+  end
+
+  defp schedule_next_at_midnight do
+    timezone = Config.timezone()
+    now = DateTime.now!(timezone)
+    tomorrow = Date.add(DateTime.to_date(now), 1)
+    reset_dt = NaiveDateTime.new!(tomorrow, ~T[00:01:00]) |> DateTime.from_naive!(timezone)
+    ms = DateTime.diff(reset_dt, now, :millisecond)
+
+    Logger.info("[odr] Scheduling next ODR sync at midnight reset (#{ms}ms from now)")
+
     %{}
     |> __MODULE__.new(scheduled_at: DateTime.add(DateTime.utc_now(), ms, :millisecond))
     |> Oban.insert!()

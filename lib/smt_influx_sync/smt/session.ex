@@ -103,6 +103,7 @@ defmodule SmtInfluxSync.SMT.Session do
 
       case authenticate_and_save() do
         {:ok, token} ->
+          schedule_proactive_refresh()
           {:reply, :ok, %{state | token: token}}
 
         {:error, reason} ->
@@ -116,11 +117,28 @@ defmodule SmtInfluxSync.SMT.Session do
       case setup() do
         {:ok, new_state} ->
           Logger.info("SMT Session Ready")
+          schedule_proactive_refresh()
           {:noreply, Map.put(new_state, :resolved, true)}
 
         {:error, reason} ->
           Logger.error("Setup failed: #{inspect(reason)}. Retrying in 1 minute...")
           Process.send_after(self(), :setup, 60_000)
+          {:noreply, state}
+      end
+    end
+
+    @impl true
+    def handle_info(:proactive_refresh, state) do
+      Logger.info("[session] Proactively refreshing SMT token")
+
+      case authenticate_and_save() do
+        {:ok, token} ->
+          schedule_proactive_refresh()
+          {:noreply, %{state | token: token}}
+
+        {:error, reason} ->
+          Logger.error("[session] Proactive token refresh failed: #{inspect(reason)}, retrying in 5 minutes")
+          Process.send_after(self(), :proactive_refresh, 5 * 60 * 1_000)
           {:noreply, state}
       end
     end
@@ -181,6 +199,10 @@ defmodule SmtInfluxSync.SMT.Session do
         {:error, _} ->
           :error
       end
+    end
+
+    defp schedule_proactive_refresh do
+      Process.send_after(self(), :proactive_refresh, Config.token_refresh_interval_ms())
     end
 
     defp save_token(token) do

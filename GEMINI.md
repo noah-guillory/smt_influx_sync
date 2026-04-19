@@ -16,7 +16,7 @@ This project is a resilient synchronization bridge between **Smart Meter Texas (
 ## Architecture
 
 The application uses a supervision tree for fault tolerance:
-- **`SmtInfluxSync.InfluxWriter`**: Manages writes to InfluxDB with a local DETS buffer for resilience when InfluxDB is unreachable.
+- **`SmtInfluxSync.InfluxWriter`**: Manages writes to InfluxDB with a SQLite-backed `PendingWrite` queue for resilience when InfluxDB is unreachable.
 - **`SmtInfluxSync.SMT.Session`**: Manages the authentication token and meter discovery for SMT.
 - **`SmtInfluxSync.Workers`**: Scheduled Oban jobs for different data sources:
   - `ODR`: On-demand real-time reads.
@@ -44,7 +44,7 @@ Key configuration options (see `.env.example` for a full list):
 
 ## Development Conventions
 
-- **Data Persistence**: All local state (SQLite DB, tokens, DETS buffers) is stored in the `DATA_DIR`. When running locally, ensure this directory is writable (e.g., `DATA_DIR=./data mix phx.server`).
+- **Data Persistence**: All local state (SQLite DB, tokens, sync state files) is stored in the `DATA_DIR`. When running locally, ensure this directory is writable (e.g., `DATA_DIR=./data mix phx.server`).
 - **Configuration**: Managed via `SmtInfluxSync.Config` and can be updated at runtime through the Settings UI, which persists overrides to `config_overrides.json` in the `DATA_DIR`.
 - **Worker Management**: Workers are scheduled at specific times of day (configured in Settings). Initial syncs are triggered on startup if data is missing.
 - **Multi-Meter Support**: The system auto-discovers all meters associated with the SMT account. They can be labeled and individually enabled/disabled in the Settings UI.

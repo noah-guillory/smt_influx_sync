@@ -5,7 +5,7 @@ Syncs electricity usage data from [Smart Meter Texas](https://www.smartmetertexa
 Features:
 - Auto-discovers your ESIID and meter number from your SMT account
 - Persists the SMT auth token across restarts (avoids redundant logins)
-- Queues failed InfluxDB writes to disk (DETS) and retries automatically
+- Queues failed InfluxDB writes to SQLite and retries automatically
 - Skips duplicate ODR requests when a recent read already exists
 
 ## Configuration
@@ -47,8 +47,7 @@ INFLUX_BUCKET=your-bucket
 # Mount this as a Docker volume to survive container restarts.
 # DATA_DIR=/data
 
-# Optional: override individual file paths within DATA_DIR.
-# PENDING_WRITES_PATH=/data/influx_pending_writes.dets
+# Optional: override the SMT token file path within DATA_DIR.
 # TOKEN_PATH=/data/smt_token
 ```
 
@@ -75,7 +74,7 @@ Then start it:
 docker compose up -d
 ```
 
-The `/data` volume persists the SMT auth token and any pending InfluxDB writes across container restarts. If you change the `PENDING_WRITES_PATH` or `TOKEN_PATH` env vars, update the volume mount accordingly.
+The `/data` volume persists the SMT auth token, the SQLite database (including any queued InfluxDB writes), and sync state files across container restarts.
 
 ### Running alongside InfluxDB
 

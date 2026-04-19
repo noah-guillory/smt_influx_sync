@@ -34,7 +34,7 @@ Uses a `:one_for_one` strategy. If the `InfluxWriter` or the `SMT.Session` super
 
 ### 2. InfluxDB Writer (`SmtInfluxSync.InfluxWriter`)
 A dedicated GenServer responsible for all writes to InfluxDB.
-- **Resilience**: It uses **DETS** (Disk Erlang Term Storage) to queue writes if InfluxDB is unreachable or returns an error.
+- **Resilience**: It queues failed writes to the SQLite `PendingWrite` table (via Ecto) if InfluxDB is unreachable or returns an error.
 - **Efficiency**: It flushes queued writes in batches of up to 5,000 points using the InfluxDB Line Protocol.
 
 ### 3. SMT Session Supervisor (`SmtInfluxSync.SMT.Session`)
@@ -70,7 +70,7 @@ A separate worker that queries InfluxDB for the last 12 months of usage, calcula
 3.  **Fetch**: Worker calls `Session.Manager.get_credentials()` and then makes an API request via `SMTClient`.
 4.  **Process**: Data is parsed and formatted into InfluxDB Line Protocol via `Workers.Helper`.
 5.  **Write**: Worker sends data to `InfluxWriter.write_batch/1`.
-6.  **Persistence**: `InfluxWriter` immediately attempts an HTTP POST to InfluxDB. If it fails, the data is saved to a `.dets` file for later retry.
+6.  **Persistence**: `InfluxWriter` immediately attempts an HTTP POST to InfluxDB. If it fails, the data is saved to the SQLite `PendingWrite` table for later retry.
 
 ---
 

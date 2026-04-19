@@ -22,9 +22,6 @@ defmodule SmtInfluxSync.Config do
   def influx_org, do: Application.fetch_env!(@app, :influx_org)
   def influx_bucket, do: Application.fetch_env!(@app, :influx_bucket)
 
-  def pending_writes_path,
-    do: Application.get_env(@app, :pending_writes_path, "/data/influx_pending_writes.dets")
-
   def token_path,
     do: Application.get_env(@app, :token_path, "/data/smt_token")
 
@@ -64,6 +61,10 @@ defmodule SmtInfluxSync.Config do
   end
 
   def smt_request_timeout_ms, do: Application.get_env(@app, :smt_request_timeout_ms, 120_000)
+
+  # How long after a successful auth to proactively refresh the token (default: 23 hours).
+  def token_refresh_interval_ms,
+    do: Application.get_env(@app, :token_refresh_interval_ms, 23 * 60 * 60 * 1_000)
 
   def poll_interval_ms, do: Application.get_env(@app, :poll_interval_ms, 5_000)
   def poll_max_attempts, do: Application.get_env(@app, :poll_max_attempts, 24)
