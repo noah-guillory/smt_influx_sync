@@ -5,7 +5,7 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
 
   @impl true
   def mount(_params, _session, socket) do
-    {:ok, assign_data(socket) |> assign(show_clear_confirm: false)}
+    {:ok, assign_data(socket) |> assign(show_clear_confirm: false, influx_test_result: nil)}
   end
 
   @impl true
@@ -96,6 +96,29 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
 
     ConfigManager.update_config(updates)
     {:noreply, socket |> put_flash(:info, "Configuration updated!") |> assign_data()}
+  end
+
+  @impl true
+  def handle_event("test_influx", _params, socket) do
+    result = test_influx_connection()
+    {:noreply, assign(socket, influx_test_result: result)}
+  end
+
+  defp test_influx_connection do
+    url = "#{Config.influx_url()}/api/v2/buckets"
+
+    case Req.get(url,
+           params: [org: Config.influx_org()],
+           headers: [{"authorization", "Token #{Config.influx_token()}"}],
+           retry: false
+         ) do
+      {:ok, %{status: 200}} -> {:ok, "Connected — credentials valid"}
+      {:ok, %{status: 401}} -> {:error, "Unauthorized — check InfluxDB token"}
+      {:ok, %{status: 404}} -> {:error, "Not found — check URL and org name"}
+      {:ok, %{status: s}} -> {:error, "Unexpected HTTP #{s}"}
+      {:error, %Req.TransportError{reason: :econnrefused}} -> {:error, "Connection refused — is InfluxDB reachable?"}
+      {:error, reason} -> {:error, "Request failed: #{inspect(reason)}"}
+    end
   end
 
   defp parse_value("kwh_rate", v), do: parse_float_safe(v)
@@ -307,6 +330,25 @@ defmodule SmtInfluxSyncWeb.SettingsLive do
             <div class="md:col-span-2">
               <label class="block text-sm font-medium text-slate-700 mb-1">InfluxDB Token</label>
               <input type="password" name="influx_token" value={@config.influx_token} class="w-full rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+            </div>
+            <div class="md:col-span-2 flex items-center gap-4 pt-2">
+              <button type="button" phx-click="test_influx" class="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 text-sm font-semibold rounded-lg transition border border-slate-200">
+                Test Connection
+              </button>
+              <%= if @influx_test_result do %>
+                <%= case @influx_test_result do %>
+                  <% {:ok, msg} -> %>
+                    <span class="flex items-center gap-1.5 text-sm font-medium text-green-600">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+                      <%= msg %>
+                    </span>
+                  <% {:error, msg} -> %>
+                    <span class="flex items-center gap-1.5 text-sm font-medium text-red-600">
+                      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/></svg>
+                      <%= msg %>
+                    </span>
+                <% end %>
+              <% end %>
             </div>
           </div>
         </div>

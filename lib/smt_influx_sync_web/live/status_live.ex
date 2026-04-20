@@ -17,7 +17,8 @@ defmodule SmtInfluxSyncWeb.StatusLive do
      |> assign(
        active_tab: "history",
        log_level_filter: "all",
-       system_logs_limit: @log_page_size
+       system_logs_limit: @log_page_size,
+       syncing_sources: MapSet.new()
      )
      |> load_system_logs()}
   end
@@ -29,8 +30,15 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   end
 
   @impl true
-  def handle_info({event, _log}, socket) when event in [:sync_started, :sync_completed, :sync_failed] do
-    {:noreply, assign_data(socket)}
+  def handle_info({:sync_started, log}, socket) do
+    syncing = MapSet.put(socket.assigns.syncing_sources, log.source)
+    {:noreply, socket |> assign(syncing_sources: syncing) |> assign_data()}
+  end
+
+  @impl true
+  def handle_info({event, log}, socket) when event in [:sync_completed, :sync_failed] do
+    syncing = MapSet.delete(socket.assigns.syncing_sources, log.source)
+    {:noreply, socket |> assign(syncing_sources: syncing) |> assign_data()}
   end
 
   @impl true
@@ -51,7 +59,8 @@ defmodule SmtInfluxSyncWeb.StatusLive do
         end
 
       %{} |> worker.new() |> Oban.insert!()
-      {:noreply, socket |> put_flash(:info, "Sync triggered for #{source}!")}
+      syncing = MapSet.put(socket.assigns.syncing_sources, source)
+      {:noreply, socket |> assign(syncing_sources: syncing) |> put_flash(:info, "Sync triggered for #{source}!")}
     else
       {:noreply, socket |> put_flash(:error, "Oban is disabled, cannot trigger sync.")}
     end
@@ -160,6 +169,10 @@ defmodule SmtInfluxSyncWeb.StatusLive do
     timezone = Config.timezone()
     now = DateTime.now!(timezone)
 
+    active_meters = SmtInfluxSync.Meter.list_active()
+    odr_count = Enum.sum(Enum.map(active_meters, &SmtInfluxSync.Workers.ODR.daily_count(&1.esiid)))
+    odr_limit = max(1, length(active_meters)) * Config.odr_daily_limit()
+
     ~w(daily interval monthly odr ynab)
     |> Enum.map(fn source ->
       latest_log = SmtInfluxSync.SyncMetadata.get_latest_sync(source)
@@ -212,7 +225,8 @@ defmodule SmtInfluxSyncWeb.StatusLive do
           _ -> false
         end
 
-      %{source: source, last_sync: last_sync, next_sync: next_sync, latest_data_point: latest_data_point, is_stale: is_stale}
+      odr_gauge = if source == "odr", do: %{count: odr_count, limit: odr_limit}, else: nil
+      %{source: source, last_sync: last_sync, next_sync: next_sync, latest_data_point: latest_data_point, is_stale: is_stale, odr_gauge: odr_gauge}
     end)
   end
 
@@ -230,11 +244,21 @@ defmodule SmtInfluxSyncWeb.StatusLive do
           <h2 class="text-xl font-semibold mb-4 text-slate-700">Sync Status</h2>
           <dl class="space-y-4">
             <%= for status <- @sync_status do %>
+              <% is_syncing = MapSet.member?(@syncing_sources, status.source) %>
               <div class="flex justify-between items-center border-b border-slate-100 pb-3 last:border-0 last:pb-0">
                 <div class="space-y-1">
                   <div class="flex items-center gap-2">
                     <dt class="text-slate-500 capitalize font-medium"><%= status.source %></dt>
-                    <%= if status.is_stale do %>
+                    <%= if is_syncing do %>
+                      <span class="flex items-center gap-1 px-1.5 py-0.5 bg-indigo-100 text-indigo-600 text-[10px] font-bold rounded uppercase tracking-wider">
+                        <svg class="w-2.5 h-2.5 animate-spin" fill="none" viewBox="0 0 24 24">
+                          <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                          <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                        </svg>
+                        Syncing
+                      </span>
+                    <% end %>
+                    <%= if status.is_stale and not is_syncing do %>
                       <span class="px-1.5 py-0.5 bg-red-100 text-red-600 text-[10px] font-bold rounded uppercase tracking-wider">Stale</span>
                     <% end %>
                   </div>
@@ -247,11 +271,39 @@ defmodule SmtInfluxSyncWeb.StatusLive do
                   <dd class="text-xs text-slate-400">
                     Next: <span class="text-indigo-600 font-medium"><%= status.next_sync %></span>
                   </dd>
+                  <%= if g = status.odr_gauge do %>
+                    <dd class="text-xs text-slate-400 pt-1">
+                      <div class="flex items-center gap-2">
+                        <span>Daily reads: <span class={[
+                          "font-medium",
+                          g.count >= g.limit && "text-red-600",
+                          g.count >= div(g.limit, 2) && g.count < g.limit && "text-amber-600",
+                          g.count < div(g.limit, 2) && "text-slate-700"
+                        ]}><%= g.count %> / <%= g.limit %></span></span>
+                      </div>
+                      <div class="mt-1 w-full bg-slate-100 rounded-full h-1.5">
+                        <div
+                          class={[
+                            "h-1.5 rounded-full transition-all",
+                            g.count >= g.limit && "bg-red-500",
+                            g.count >= div(g.limit, 2) && g.count < g.limit && "bg-amber-400",
+                            g.count < div(g.limit, 2) && "bg-indigo-400"
+                          ]}
+                          style={"width: #{min(100, round(g.count / g.limit * 100))}%"}
+                        ></div>
+                      </div>
+                    </dd>
+                  <% end %>
                 </div>
                 <button
                   phx-click="force_sync"
                   phx-value-source={status.source}
-                  class="text-xs px-3 py-1 bg-indigo-50 hover:bg-indigo-100 text-indigo-600 font-semibold rounded transition"
+                  disabled={is_syncing}
+                  class={[
+                    "text-xs px-3 py-1 font-semibold rounded transition",
+                    is_syncing && "bg-slate-100 text-slate-400 cursor-not-allowed",
+                    not is_syncing && "bg-indigo-50 hover:bg-indigo-100 text-indigo-600"
+                  ]}
                 >
                   Sync Now
                 </button>

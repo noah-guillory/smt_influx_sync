@@ -117,6 +117,21 @@ defmodule SmtInfluxSync.Workers.ODR do
     |> Oban.insert!()
   end
 
+  @doc "Returns today's ODR request count for a given ESIID (0 if no requests yet)."
+  def daily_count(esiid) do
+    today = Date.to_iso8601(Date.utc_today())
+    path = Config.odr_daily_count_path() <> "_#{esiid}"
+
+    case File.read(path) do
+      {:ok, contents} ->
+        case String.split(String.trim(contents), "\n") do
+          [^today, count_str] -> String.to_integer(count_str)
+          _ -> 0
+        end
+      {:error, _} -> 0
+    end
+  end
+
   # --- Private ---
 
   defp do_sync(token, meter) do
@@ -170,7 +185,7 @@ defmodule SmtInfluxSync.Workers.ODR do
 
   defp request_odr_and_read(token, meter) do
     limit = Config.odr_daily_limit()
-    count = odr_daily_count(meter.esiid)
+    count = daily_count(meter.esiid)
 
     if count >= limit do
       {:error, :daily_limit_reached}
@@ -190,22 +205,8 @@ defmodule SmtInfluxSync.Workers.ODR do
     end
   end
 
-  defp odr_daily_count(esiid) do
-    today = Date.to_iso8601(Date.utc_today())
-    path = Config.odr_daily_count_path() <> "_#{esiid}"
-
-    case File.read(path) do
-      {:ok, contents} ->
-        case String.split(String.trim(contents), "\n") do
-          [^today, count_str] -> String.to_integer(count_str)
-          _ -> 0
-        end
-      {:error, _} -> 0
-    end
-  end
-
   defp increment_odr_daily_count(esiid) do
-    count = odr_daily_count(esiid) + 1
+    count = daily_count(esiid) + 1
     today = Date.to_iso8601(Date.utc_today())
     path = Config.odr_daily_count_path() <> "_#{esiid}"
     path |> Path.dirname() |> File.mkdir_p!()
