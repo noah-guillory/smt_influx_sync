@@ -18,7 +18,10 @@ defmodule SmtInfluxSyncWeb.StatusLive do
        active_tab: "history",
        log_level_filter: "all",
        system_logs_limit: @log_page_size,
-       syncing_sources: MapSet.new()
+       syncing_sources: MapSet.new(),
+       gap_results: %{},
+       gap_loading: MapSet.new(),
+       gap_tasks: %{}
      )
      |> load_system_logs()}
   end
@@ -44,6 +47,32 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   @impl true
   def handle_info(:tick, socket) do
     {:noreply, assign_data(socket)}
+  end
+
+  @impl true
+  def handle_info({ref, result}, socket) when is_map_key(socket.assigns.gap_tasks, ref) do
+    Process.demonitor(ref, [:flush])
+    source = socket.assigns.gap_tasks[ref]
+
+    {:noreply,
+     assign(socket,
+       gap_loading: MapSet.delete(socket.assigns.gap_loading, source),
+       gap_results: Map.put(socket.assigns.gap_results, source, result),
+       gap_tasks: Map.delete(socket.assigns.gap_tasks, ref)
+     )}
+  end
+
+  @impl true
+  def handle_info({:DOWN, ref, :process, _pid, reason}, socket)
+      when is_map_key(socket.assigns.gap_tasks, ref) do
+    source = socket.assigns.gap_tasks[ref]
+
+    {:noreply,
+     assign(socket,
+       gap_loading: MapSet.delete(socket.assigns.gap_loading, source),
+       gap_results: Map.put(socket.assigns.gap_results, source, {:error, reason}),
+       gap_tasks: Map.delete(socket.assigns.gap_tasks, ref)
+     )}
   end
 
   @impl true
@@ -109,6 +138,17 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   def handle_event("load_more_logs", _params, socket) do
     new_limit = socket.assigns.system_logs_limit + @log_page_size
     {:noreply, socket |> assign(system_logs_limit: new_limit) |> load_system_logs()}
+  end
+
+  @impl true
+  def handle_event("detect_gaps", %{"source" => source}, socket) do
+    task = Task.async(fn -> SmtInfluxSync.InfluxQuery.detect_gaps(source) end)
+
+    {:noreply,
+     assign(socket,
+       gap_loading: MapSet.put(socket.assigns.gap_loading, source),
+       gap_tasks: Map.put(socket.assigns.gap_tasks, task.ref, source)
+     )}
   end
 
   defp load_system_logs(socket) do
@@ -508,23 +548,91 @@ defmodule SmtInfluxSyncWeb.StatusLive do
       </div>
 
       <div class="bg-white p-8 rounded-xl shadow-sm border border-slate-200 mb-12">
-        <h2 class="text-2xl font-semibold mb-6 text-slate-700">Gap Filler (Historical Sync)</h2>
+        <h2 class="text-2xl font-semibold mb-2 text-slate-700">Gap Filler (Historical Sync)</h2>
         <p class="text-slate-500 mb-6 text-sm">
-          Trigger a manual sync for a specific date range. Useful for filling in missing data if the service was down.
+          Trigger a manual sync for a specific date range. Use "Detect Gaps" to automatically find missing data and pre-fill the dates below.
         </p>
         <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
           <%= for source <- ~w(interval daily monthly) do %>
+            <% gap_result = Map.get(@gap_results, source)
+               is_gap_loading = MapSet.member?(@gap_loading, source)
+               gap_prefill =
+                 case gap_result do
+                   {:ok, [{s, _} | _] = gaps} ->
+                     {_, e} = List.last(gaps)
+                     %{start: Date.to_string(s), end: Date.to_string(e)}
+                   _ ->
+                     %{start: "", end: ""}
+                 end %>
             <div class="p-4 bg-slate-50 rounded-lg border border-slate-100">
-              <h3 class="font-semibold text-slate-700 capitalize mb-3"><%= source %> Sync</h3>
+              <div class="flex items-center justify-between mb-3">
+                <h3 class="font-semibold text-slate-700 capitalize"><%= source %> Sync</h3>
+                <button
+                  phx-click="detect_gaps"
+                  phx-value-source={source}
+                  disabled={is_gap_loading}
+                  class={[
+                    "text-xs px-2 py-1 rounded font-medium transition",
+                    is_gap_loading && "bg-slate-100 text-slate-400 cursor-not-allowed",
+                    not is_gap_loading && "bg-slate-200 hover:bg-slate-300 text-slate-700"
+                  ]}
+                >
+                  <%= if is_gap_loading do %>
+                    <span class="flex items-center gap-1">
+                      <svg class="w-3 h-3 animate-spin" fill="none" viewBox="0 0 24 24">
+                        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path>
+                      </svg>
+                      Detecting…
+                    </span>
+                  <% else %>
+                    Detect Gaps
+                  <% end %>
+                </button>
+              </div>
+
+              <%= if gap_result do %>
+                <%= case gap_result do %>
+                  <% {:ok, []} -> %>
+                    <div class="flex items-center gap-1.5 text-xs text-green-600 bg-green-50 border border-green-100 rounded px-2 py-1.5 mb-3">
+                      <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/>
+                      </svg>
+                      No gaps detected
+                    </div>
+                  <% {:ok, gaps} -> %>
+                    <div class="mb-3 text-xs">
+                      <div class="font-medium text-amber-700 bg-amber-50 border border-amber-100 rounded px-2 py-1 mb-1.5">
+                        <%= length(gaps) %> gap<%= if length(gaps) != 1, do: "s" %> found — dates pre-filled below
+                      </div>
+                      <div class="max-h-24 overflow-y-auto space-y-0.5 px-1">
+                        <%= for {s, e} <- gaps do %>
+                          <div class="text-slate-500 font-mono">
+                            <%= Date.to_string(s) %><%= if s != e, do: " → #{Date.to_string(e)}" %>
+                          </div>
+                        <% end %>
+                      </div>
+                    </div>
+                  <% {:error, :unauthorized} -> %>
+                    <div class="text-xs text-red-600 bg-red-50 border border-red-100 rounded px-2 py-1.5 mb-3">
+                      Unauthorized — check InfluxDB token
+                    </div>
+                  <% {:error, _} -> %>
+                    <div class="text-xs text-red-600 bg-red-50 border border-red-100 rounded px-2 py-1.5 mb-3">
+                      Error querying InfluxDB
+                    </div>
+                <% end %>
+              <% end %>
+
               <form phx-submit="historical_sync" class="space-y-3">
                 <input type="hidden" name="source" value={source} />
                 <div>
                   <label class="block text-xs font-medium text-slate-500 mb-1">Start Date</label>
-                  <input type="date" name="start_date" required class="w-full text-sm rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                  <input type="date" name="start_date" value={gap_prefill.start} required class="w-full text-sm rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
                 </div>
                 <div>
                   <label class="block text-xs font-medium text-slate-500 mb-1">End Date</label>
-                  <input type="date" name="end_date" required class="w-full text-sm rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
+                  <input type="date" name="end_date" value={gap_prefill.end} required class="w-full text-sm rounded-md border-slate-300 shadow-sm focus:border-indigo-500 focus:ring-indigo-500" />
                 </div>
                 <button type="submit" class="w-full py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-semibold rounded transition shadow-sm">
                   Run Historical Sync
