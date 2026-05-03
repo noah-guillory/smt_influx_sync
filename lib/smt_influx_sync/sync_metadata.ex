@@ -85,6 +85,20 @@ defmodule SmtInfluxSync.SyncMetadata do
     |> Repo.all()
   end
 
+  def list_recent_logs_paginated(page, page_size) do
+    offset = (page - 1) * page_size
+
+    SyncLog
+    |> order_by([l], desc: l.inserted_at)
+    |> limit(^page_size)
+    |> offset(^offset)
+    |> Repo.all()
+  end
+
+  def count_logs do
+    Repo.aggregate(SyncLog, :count)
+  end
+
   @doc """
   Returns p50/p95/avg duration stats for successful syncs of a given source
   over the last `days` days. Returns nil if fewer than 2 samples exist.

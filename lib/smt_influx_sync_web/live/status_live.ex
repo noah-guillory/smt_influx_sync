@@ -3,6 +3,7 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   alias SmtInfluxSync.Config
 
   @log_page_size 50
+  @sync_history_page_size 25
 
   @impl true
   def mount(_params, _session, socket) do
@@ -13,16 +14,18 @@ defmodule SmtInfluxSyncWeb.StatusLive do
     end
 
     {:ok,
-     assign_data(socket)
+     socket
      |> assign(
        active_tab: "history",
        log_level_filter: "all",
        system_logs_limit: @log_page_size,
+       sync_history_page: 1,
        syncing_sources: MapSet.new(),
        gap_results: %{},
        gap_loading: MapSet.new(),
        gap_tasks: %{}
      )
+     |> assign_data()
      |> load_system_logs()}
   end
 
@@ -73,6 +76,11 @@ defmodule SmtInfluxSyncWeb.StatusLive do
        gap_results: Map.put(socket.assigns.gap_results, source, {:error, reason}),
        gap_tasks: Map.delete(socket.assigns.gap_tasks, ref)
      )}
+  end
+
+  @impl true
+  def handle_event("history_page", %{"page" => page}, socket) do
+    {:noreply, socket |> assign(sync_history_page: String.to_integer(page)) |> assign_data()}
   end
 
   @impl true
@@ -188,10 +196,16 @@ defmodule SmtInfluxSyncWeb.StatusLive do
   end
 
   defp assign_data(socket) do
+    page = Map.get(socket.assigns, :sync_history_page, 1)
+    total = SmtInfluxSync.SyncMetadata.count_logs()
+    total_pages = max(1, ceil(total / @sync_history_page_size))
+
     assign(socket,
       sync_status: fetch_sync_status(),
       influx_status: SmtInfluxSync.InfluxWriter.get_status(),
-      recent_logs: SmtInfluxSync.SyncMetadata.list_recent_logs(10),
+      recent_logs: SmtInfluxSync.SyncMetadata.list_recent_logs_paginated(page, @sync_history_page_size),
+      sync_history_total: total,
+      sync_history_total_pages: total_pages,
       duration_stats: fetch_duration_stats(),
       meters: SmtInfluxSync.Meter.list_all()
     )
@@ -496,6 +510,41 @@ defmodule SmtInfluxSyncWeb.StatusLive do
               </tbody>
             </table>
           </div>
+          <%!-- Pagination controls --%>
+          <%= if @sync_history_total_pages > 1 do %>
+            <div class="flex items-center justify-between mt-4 pt-4 border-t border-slate-100">
+              <div class="text-sm text-slate-500">
+                Page <%= @sync_history_page %> of <%= @sync_history_total_pages %>
+                <span class="ml-2 text-slate-400">(<%= @sync_history_total %> total)</span>
+              </div>
+              <div class="flex gap-2">
+                <button
+                  phx-click="history_page"
+                  phx-value-page={@sync_history_page - 1}
+                  disabled={@sync_history_page <= 1}
+                  class={[
+                    "px-3 py-1.5 text-sm font-medium rounded transition",
+                    @sync_history_page <= 1 && "bg-slate-50 text-slate-300 cursor-not-allowed",
+                    @sync_history_page > 1 && "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                  ]}
+                >
+                  ← Prev
+                </button>
+                <button
+                  phx-click="history_page"
+                  phx-value-page={@sync_history_page + 1}
+                  disabled={@sync_history_page >= @sync_history_total_pages}
+                  class={[
+                    "px-3 py-1.5 text-sm font-medium rounded transition",
+                    @sync_history_page >= @sync_history_total_pages && "bg-slate-50 text-slate-300 cursor-not-allowed",
+                    @sync_history_page < @sync_history_total_pages && "bg-slate-100 hover:bg-slate-200 text-slate-600"
+                  ]}
+                >
+                  Next →
+                </button>
+              </div>
+            </div>
+          <% end %>
         <% else %>
           <%!-- Level filter buttons --%>
           <div class="flex gap-2 mb-4">
