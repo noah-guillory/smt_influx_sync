@@ -81,10 +81,18 @@ defmodule SmtInfluxSync.Workers.ODR do
             schedule_next()
           end
 
-          if Enum.any?(results, fn r -> match?({:error, _}, r) end) do
-            {:error, :sync_failed}
-          else
-            :ok
+          error_reasons = for {:error, reason} <- results, do: reason
+
+          cond do
+            error_reasons == [] ->
+              :ok
+
+            Enum.all?(error_reasons, &(&1 == :rate_limited)) ->
+              # Rate limiting is expected for ODR and should not trigger Oban retries.
+              :ok
+
+            true ->
+              {:error, :sync_failed}
           end
         end
 
