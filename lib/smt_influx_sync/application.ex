@@ -4,6 +4,8 @@ defmodule SmtInfluxSync.Application do
   @moduledoc false
 
   use Application
+  import Ecto.Query, only: [from: 2]
+  require Logger
 
   @impl true
   def start(_type, _args) do
@@ -64,6 +66,8 @@ defmodule SmtInfluxSync.Application do
   end
 
   defp enqueue_initial_jobs do
+    maybe_cleanup_oban_odr_jobs_once()
+
     jobs = [
       {"daily", SmtInfluxSync.Workers.Daily, 24},
       {"interval", SmtInfluxSync.Workers.Interval, 1},
@@ -80,6 +84,36 @@ defmodule SmtInfluxSync.Application do
         worker.schedule_next()
       end
     end)
+  end
+
+  defp maybe_cleanup_oban_odr_jobs_once do
+    data_dir = Application.get_env(:smt_influx_sync, :data_dir, "/data")
+    marker_path = Path.join(data_dir, "oban_odr_cleanup_v1.done")
+
+    if File.exists?(marker_path) do
+      :ok
+    else
+      File.mkdir_p!(data_dir)
+
+      odr_worker = Atom.to_string(SmtInfluxSync.Workers.ODR)
+      cleanup_states = ["available", "scheduled", "retryable", "executing"]
+
+      {deleted_count, _} =
+        from(j in Oban.Job,
+          where: j.worker == ^odr_worker and j.state in ^cleanup_states
+        )
+        |> SmtInfluxSync.Repo.delete_all()
+
+      Logger.warning("[startup] One-time ODR cleanup removed #{deleted_count} pending Oban jobs")
+
+      case File.write(marker_path, "#{DateTime.utc_now()} cleaned=#{deleted_count}\n") do
+        :ok ->
+          :ok
+
+        {:error, reason} ->
+          Logger.warning("[startup] Failed writing ODR cleanup marker #{marker_path}: #{inspect(reason)}")
+      end
+    end
   end
 
   defp migrate_files_to_db do
